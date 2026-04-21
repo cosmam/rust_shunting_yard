@@ -1,0 +1,5 @@
+# rust-toolchain.toml
+[toolchain]
+channel = "stable"
+version = "1.94.1" # This is the specific stable version we're locking in!
+components = ["rustfmt", "clippy"] # You can even tell it to make sure these are installed too!
