@@ -26,6 +26,8 @@ pub enum Opcode {
     Power,
     Multiply,
     Divide,
+    Plus,
+    Minus,
     BitwiseXor,
     Modulo,
     LogicalAnd,

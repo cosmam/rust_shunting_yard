@@ -111,6 +111,22 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
+    #[precedence(level="6")] #[assoc(side="left")]
+    <lhs:Expression> "+" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::Plus,
+        rhs
+        })
+    },
+    #[precedence(level="6")] #[assoc(side="left")]
+    <lhs:Expression> "-" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::Minus,
+        rhs
+        })
+    },
     #[precedence(level="5")] #[assoc(side="left")]
     <lhs:Expression> "*" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
@@ -203,6 +219,20 @@ pub Expression: Box<ast::Expression> = {
         Box::new(ast::Expression::UnaryOperation {
         value: rhs,
         operator: ast::Opcode::LogicalNot
+        })
+    },
+    #[precedence(level="3")] #[assoc(side="right")]
+    "+" <rhs:Expression> => {
+        Box::new(ast::Expression::UnaryOperation {
+        value: rhs,
+        operator: ast::Opcode::Plus
+        })
+    },
+    #[precedence(level="3")] #[assoc(side="right")]
+    "-" <rhs:Expression> => {
+        Box::new(ast::Expression::UnaryOperation {
+        value: rhs,
+        operator: ast::Opcode::Minus
         })
     },
     #[precedence(level="3")] #[assoc(side="right")]
