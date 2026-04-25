@@ -21,9 +21,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         let _ = shunting_yard::evaluate(&input).map_err(|e| {
-            eprintln!("Detailed log: {:?}", e);
-            e // Return the original error
-        })?;
+            eprintln!("Detailed log: {:?}", e)
+        });
     }
 
     Ok(())

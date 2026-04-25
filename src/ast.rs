@@ -13,7 +13,10 @@ pub enum Expression {
         value: Box<Expression>, 
         operator: Opcode,
     },
-    // Function(Func, Vec<Expr>),
+    Function {
+        func: Func, 
+        arguments: Vec<Box<Expression>>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,7 +49,22 @@ pub enum Opcode {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Func {
+    Min,
+    Max,
+    Power,
+    Modulo,
+    Remainder,
+    Round,
     Cos,
     Sin,
     Tan,
+    ACos,
+    ASin,
+    ATan,
+    Abs,
+    Ln,
+    Log,
+    Exp,
+    Floor,
+    Ceiling,
 }

@@ -258,12 +258,115 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
+    "min" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Min,
+        arguments
+        })
+    },
+    "max" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Max,
+        arguments
+        })
+    },
+    "pow" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Power,
+        arguments
+        })
+    },
+    "mod" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Modulo,
+        arguments
+        })
+    },
+    "rem" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Remainder,
+        arguments
+        })
+    },
+    "round" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Round,
+        arguments
+        })
+    },
+    "cos" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Cos,
+        arguments
+        })
+    },
+    "sin" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Sin,
+        arguments
+        })
+    },
+    "tan" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Tan,
+        arguments
+        })
+    },
+    "acos" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::ACos,
+        arguments
+        })
+    },
+    "asin" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::ASin,
+        arguments
+        })
+    },
+    "atan" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::ATan,
+        arguments
+        })
+    },
+    "abs" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Abs,
+        arguments
+        })
+    },
+    "ln" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Ln,
+        arguments
+        })
+    },
+    "log" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Log,
+        arguments
+        })
+    },
+    "exp" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Exp,
+        arguments
+        })
+    },
+    "floor" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Floor,
+        arguments
+        })
+    },
+    "ceiling" "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func: ast::Func::Ceiling,
+        arguments
+        })
+    },
 }
-
-// SingleComma: () = {
-//     "," => (),
-//     RecoverError,
-// };
 
 Comma<T>: Vec<T> = {
     <mut v:(<T> ",")*> <e:T?> => match e {
