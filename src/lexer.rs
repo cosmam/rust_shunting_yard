@@ -1,160 +1,31 @@
-use logos::Logos;
+use logos::{Logos, SpannedIter};
 
-fn parse_hex(lex: &mut logos::Lexer<Token>) -> Option<isize> {
-    let slice = lex.slice();
-    let cleaned = slice.strip_prefix("0x").unwrap_or(slice);
-    isize::from_str_radix(cleaned, 16).ok()
+use crate::tokens::{LexicalError, Token}; // your Token enum, as above
+
+pub type Spanned<Tok, Loc, Error> = Result<(Loc, Tok, Loc), Error>;
+
+pub struct Lexer<'input> {
+    // instead of an iterator over characters, we have a token iterator
+    token_stream: SpannedIter<'input, Token>,
 }
 
-#[derive(Logos, Debug, PartialEq, Clone)]
-#[logos(skip r"[ \t\n\f]+")]
-#[logos(error = String)]
-pub enum Token {
-    #[token("(")]
-    LeftParen,
+impl<'input> Lexer<'input> {
+    pub fn new(input: &'input str) -> Self {
+        // the Token::lexer() method is provided by the Logos trait
+        Self {
+            token_stream: Token::lexer(input).spanned(),
+        }
+    }
+}
 
-    #[token(")")]
-    RightParen,
+impl<'input> Iterator for Lexer<'input> {
+    type Item = Spanned<Token, usize, LexicalError>;
 
-    #[token("==")]
-    IsEquals,
-
-    #[token("!=")]
-    #[token("/=")]
-    NotEquals,
-
-    #[token("<=")]
-    LessThanEquals,
-
-    #[token(">=")]
-    GreaterThanEquals,
-
-    #[token("~=")]
-    ApproximatelyEquals,
-    
-    #[token("+")]
-    Plus,
-
-    #[token("-")]
-    Minus,
-
-    #[token("**")]
-    Exponentiation,
-
-    #[token("*")]
-    Multiply,
-
-    #[token("/")]
-    Divide,
-
-    #[token("^")]
-    BitwiseXor,
-
-    #[token("%")]
-    Modulo,
-
-    #[token("&&")]
-    LogicalAnd,
-
-    #[token("||")]
-    LogicalOr,
-
-    #[token("<<")]
-    BitshiftLeft,
-
-    #[token(">>")]
-    BitshiftRight,
-
-    #[token("°")]
-    Degrees,
-
-    #[token("!")]
-    LogicalNot,
-
-    #[token("~")]
-    BitwiseNot,
-
-    #[token("min")]
-    Minimum,
-
-    #[token("max")]
-    Maximum,
-
-    #[token("pow")]
-    Power,
-
-    #[token("mod")]
-    Mod,
-
-    #[token("rem")]
-    Remainder,
-
-    #[token("round")]
-    Round,
-
-    #[token("acos")]
-    ACos,
-
-    #[token("asin")]
-    ASin,
-
-    #[token("atan")]
-    ATan,
-
-    #[token("abs")]
-    AbsoluteValue,
-
-    #[token("ln")]
-    NaturalLog,
-
-    #[token("log")]
-    Log,
-
-    #[token("exp")]
-    Euler,
-
-    #[token("floor")]
-    Floor,
-
-    #[token("ceil")]
-    #[token("ceiling")]
-    Ceiling,
-
-    #[token("&")]
-    BitwiseAnd,
-
-    #[token("|")]
-    BitwiseOr,
-
-    #[token("cos")]
-    Cos,
-
-    #[token("sin")]
-    Sin,
-
-    #[token("tan")]
-    Tan,
-
-    #[token("<")]
-    LessThan,
-
-    #[token(">")]
-    GreaterThan,
-
-    #[token(",")]
-    Comma,
-
-    #[regex("[0-9]+", |lex| lex.slice().parse::<isize>().unwrap())]
-    Integer(isize),
-    
-    #[regex(r"0x[[:xdigit:]]+", callback = parse_hex)]
-    Hexadecimal(isize),
-
-    #[regex(r"(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+|[0-9]+)(?:[eE][-+]?[0-9]+)|[-+]?(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)", |lex| lex.slice().parse::<f64>().unwrap())]
-    Double(f64),
-
-    #[regex(r"[_[:alpha:]][_\.\w\d]*(?:\[\d+\])?", |lex| lex.slice().to_owned())]
-    Variable(String),
+    fn next(&mut self) -> Option<Self::Item> {
+        self.token_stream
+            .next()
+            .map(|(token, span)| Ok((span.start, token?, span.end)))
+    }
 }
 
 /************** Test Functions **************/
@@ -179,7 +50,7 @@ mod tests {
         assert_eq!(lex.span(), 4..5);
         assert_eq!(lex.slice(), ")");
     }
-    
+
     #[test]
     fn test_hexadecimal_parens() {
         let mut lex = Token::lexer("(0x1f)");
@@ -196,7 +67,7 @@ mod tests {
         assert_eq!(lex.span(), 5..6);
         assert_eq!(lex.slice(), ")");
     }
-    
+
     #[test]
     fn test_double_parens() {
         let mut lex = Token::lexer("(12.3)");
@@ -213,7 +84,7 @@ mod tests {
         assert_eq!(lex.span(), 5..6);
         assert_eq!(lex.slice(), ")");
     }
-    
+
     #[test]
     fn test_variable_parens() {
         let mut lex = Token::lexer("(Some_Name)");
@@ -222,7 +93,10 @@ mod tests {
         assert_eq!(lex.span(), 0..1);
         assert_eq!(lex.slice(), "(");
 
-        assert_eq!(lex.next(), Some(Ok(Token::Variable("Some_Name".to_string()))));
+        assert_eq!(
+            lex.next(),
+            Some(Ok(Token::Variable("Some_Name".to_string())))
+        );
         assert_eq!(lex.span(), 1..10);
         assert_eq!(lex.slice(), "Some_Name");
 
@@ -230,7 +104,7 @@ mod tests {
         assert_eq!(lex.span(), 10..11);
         assert_eq!(lex.slice(), ")");
     }
-    
+
     #[test]
     fn test_is_equals() {
         let mut lex = Token::lexer("23== 14");
@@ -247,7 +121,7 @@ mod tests {
         assert_eq!(lex.span(), 5..7);
         assert_eq!(lex.slice(), "14");
     }
-    
+
     #[test]
     fn test_not_equals1() {
         let mut lex = Token::lexer("23 != 14");
@@ -264,7 +138,7 @@ mod tests {
         assert_eq!(lex.span(), 6..8);
         assert_eq!(lex.slice(), "14");
     }
-     
+
     #[test]
     fn test_not_equals2() {
         let mut lex = Token::lexer("23 /= 14");
@@ -298,7 +172,7 @@ mod tests {
         assert_eq!(lex.span(), 6..8);
         assert_eq!(lex.slice(), "14");
     }
-    
+
     #[test]
     fn test_greater_than_equals() {
         let mut lex = Token::lexer("23 >= 14");
@@ -315,7 +189,7 @@ mod tests {
         assert_eq!(lex.span(), 6..8);
         assert_eq!(lex.slice(), "14");
     }
-    
+
     #[test]
     fn test_approximately_equals() {
         let mut lex = Token::lexer("23 ~= 14");
@@ -332,7 +206,7 @@ mod tests {
         assert_eq!(lex.span(), 6..8);
         assert_eq!(lex.slice(), "14");
     }
-    
+
     #[test]
     fn test_plus() {
         let mut lex = Token::lexer("23+14");
@@ -349,7 +223,7 @@ mod tests {
         assert_eq!(lex.span(), 3..5);
         assert_eq!(lex.slice(), "14");
     }
-    
+
     #[test]
     fn test_minus() {
         let mut lex = Token::lexer("23-14");
@@ -366,7 +240,7 @@ mod tests {
         assert_eq!(lex.span(), 3..5);
         assert_eq!(lex.slice(), "14");
     }
-        
+
     #[test]
     fn test_multiply() {
         let mut lex = Token::lexer("23* 14");
@@ -383,7 +257,7 @@ mod tests {
         assert_eq!(lex.span(), 4..6);
         assert_eq!(lex.slice(), "14");
     }
-        
+
     #[test]
     fn test_divide() {
         let mut lex = Token::lexer("23 /14");
@@ -400,7 +274,7 @@ mod tests {
         assert_eq!(lex.span(), 4..6);
         assert_eq!(lex.slice(), "14");
     }
-        
+
     #[test]
     fn test_exponentiation() {
         let mut lex = Token::lexer("23 ** 14");
@@ -417,7 +291,7 @@ mod tests {
         assert_eq!(lex.span(), 6..8);
         assert_eq!(lex.slice(), "14");
     }
-        
+
     #[test]
     fn test_bitwise_xor() {
         let mut lex = Token::lexer("23 ^ 14");
@@ -434,7 +308,7 @@ mod tests {
         assert_eq!(lex.span(), 5..7);
         assert_eq!(lex.slice(), "14");
     }
-        
+
     #[test]
     fn test_modulus() {
         let mut lex = Token::lexer("23% 14");
@@ -451,7 +325,7 @@ mod tests {
         assert_eq!(lex.span(), 4..6);
         assert_eq!(lex.slice(), "14");
     }
-       
+
     #[test]
     fn test_logical_and() {
         let mut lex = Token::lexer("23 &&14");
@@ -468,7 +342,7 @@ mod tests {
         assert_eq!(lex.span(), 5..7);
         assert_eq!(lex.slice(), "14");
     }
-       
+
     #[test]
     fn test_logical_or() {
         let mut lex = Token::lexer("23 ||14");
@@ -485,7 +359,7 @@ mod tests {
         assert_eq!(lex.span(), 5..7);
         assert_eq!(lex.slice(), "14");
     }
-       
+
     #[test]
     fn test_bitshift_left() {
         let mut lex = Token::lexer("23   <<14");
@@ -519,7 +393,7 @@ mod tests {
         assert_eq!(lex.span(), 10..12);
         assert_eq!(lex.slice(), "14");
     }
-        
+
     #[test]
     fn test_degrees() {
         let mut lex = Token::lexer("23°");
@@ -532,7 +406,7 @@ mod tests {
         assert_eq!(lex.span(), 2..4);
         assert_eq!(lex.slice(), "°");
     }
-       
+
     #[test]
     fn test_min() {
         let mut lex = Token::lexer("min(12, 13, 14 )");
@@ -569,7 +443,7 @@ mod tests {
         assert_eq!(lex.span(), 15..16);
         assert_eq!(lex.slice(), ")");
     }
-       
+
     #[test]
     fn test_max() {
         let mut lex = Token::lexer("max(12, 13, 14 )");
@@ -606,7 +480,7 @@ mod tests {
         assert_eq!(lex.span(), 15..16);
         assert_eq!(lex.slice(), ")");
     }
-       
+
     #[test]
     fn test_pow() {
         let mut lex = Token::lexer("pow(12, 14 )");
@@ -635,7 +509,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_mod() {
         let mut lex = Token::lexer("mod(12, 14 )");
@@ -664,7 +538,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_rem() {
         let mut lex = Token::lexer("rem(12, 14 )");
@@ -693,7 +567,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_round() {
         let mut lex = Token::lexer("round(12, 14 )");
@@ -722,7 +596,7 @@ mod tests {
         assert_eq!(lex.span(), 13..14);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_acos() {
         let mut lex = Token::lexer("acos(12, 14 )");
@@ -751,7 +625,7 @@ mod tests {
         assert_eq!(lex.span(), 12..13);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_asin() {
         let mut lex = Token::lexer("asin(12, 14)");
@@ -780,7 +654,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_atan() {
         let mut lex = Token::lexer("atan(12, 14 )");
@@ -809,7 +683,7 @@ mod tests {
         assert_eq!(lex.span(), 12..13);
         assert_eq!(lex.slice(), ")");
     }
-               
+
     #[test]
     fn test_cos() {
         let mut lex = Token::lexer("cos(12, 14 )");
@@ -838,7 +712,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_sin() {
         let mut lex = Token::lexer("sin(12, 14 )");
@@ -867,7 +741,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_tan() {
         let mut lex = Token::lexer("tan(12, 14 )");
@@ -896,7 +770,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_abs() {
         let mut lex = Token::lexer("abs(12, 14 )");
@@ -925,7 +799,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_log() {
         let mut lex = Token::lexer("log(12, 14 )");
@@ -954,7 +828,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_exp() {
         let mut lex = Token::lexer("exp(12, 14 )");
@@ -983,7 +857,7 @@ mod tests {
         assert_eq!(lex.span(), 11..12);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_floor() {
         let mut lex = Token::lexer("floor(12, 14 )");
@@ -1012,7 +886,7 @@ mod tests {
         assert_eq!(lex.span(), 13..14);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_ceil() {
         let mut lex = Token::lexer("ceil(12, 14 )");
@@ -1041,7 +915,7 @@ mod tests {
         assert_eq!(lex.span(), 12..13);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_ceiling() {
         let mut lex = Token::lexer("ceiling(12, 14 )");
@@ -1070,7 +944,7 @@ mod tests {
         assert_eq!(lex.span(), 15..16);
         assert_eq!(lex.slice(), ")");
     }
-           
+
     #[test]
     fn test_ln() {
         let mut lex = Token::lexer("ln(12, 14 )");
@@ -1116,7 +990,7 @@ mod tests {
         assert_eq!(lex.span(), 9..11);
         assert_eq!(lex.slice(), "14");
     }
-    
+
     #[test]
     fn test_bitwise_or() {
         let mut lex = Token::lexer("23  |    14");
@@ -1133,7 +1007,7 @@ mod tests {
         assert_eq!(lex.span(), 9..11);
         assert_eq!(lex.slice(), "14");
     }
-    
+
     #[test]
     fn test_bitwise_and() {
         let mut lex = Token::lexer("23  &    14");
@@ -1150,7 +1024,7 @@ mod tests {
         assert_eq!(lex.span(), 9..11);
         assert_eq!(lex.slice(), "14");
     }
-    
+
     #[test]
     fn test_logical_not() {
         let mut lex = Token::lexer("!23");
@@ -1163,7 +1037,7 @@ mod tests {
         assert_eq!(lex.span(), 1..3);
         assert_eq!(lex.slice(), "23");
     }
-    
+
     #[test]
     fn test_bitwise_not() {
         let mut lex = Token::lexer("~23");
@@ -1176,6 +1050,4 @@ mod tests {
         assert_eq!(lex.span(), 1..3);
         assert_eq!(lex.slice(), "23");
     }
-
 }
-
