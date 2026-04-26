@@ -180,6 +180,8 @@ pub enum Token {
 
     #[regex(r"[_[:alpha:]][_\.\w\d]*(?:\[\d+\])?", |lex| lex.slice().to_owned())]
     Variable(String),
+
+    Error,
 }
 
 impl fmt::Display for Token {

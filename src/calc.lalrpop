@@ -1,13 +1,16 @@
 use crate::tokens::{Token, LexicalError};
 use crate::ast;
 
-grammar;
+use lalrpop_util::ErrorRecovery;
+
+grammar<'err>(errors: &'err mut Vec<ErrorRecovery<usize, Token, LexicalError>>);
 
 extern {
     type Location = usize;
     type Error = LexicalError;
 
     enum Token {
+        "error" => Token::Error,
         "integer literal" => Token::Integer(<isize>),
         "hex literal" => Token::Hexadecimal(<isize>),
         "float literal" => Token::Float(<f64>),
@@ -389,6 +392,7 @@ pub Term: Box<ast::Expression> = {
         Box::new(ast::Expression::Variable(val))
     },
     "(" <Expression> ")",
+    ! => { errors.push(<>); Box::new(ast::Expression::Error) },
 }
 
 pub ExpressionList = Comma<Expression>;

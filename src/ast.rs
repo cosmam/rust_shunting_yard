@@ -17,6 +17,7 @@ pub enum Expression {
         func: Func, 
         arguments: Vec<Box<Expression>>,
     },
+    Error,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -1,5 +1,4 @@
 use logos::{Logos, SpannedIter};
-
 use crate::tokens::{LexicalError, Token}; // your Token enum, as above
 
 pub type Spanned<Tok, Loc, Error> = Result<(Loc, Tok, Loc), Error>;
@@ -23,8 +22,14 @@ impl<'input> Iterator for Lexer<'input> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.token_stream
-            .next()
-            .map(|(token, span)| Ok((span.start, token?, span.end)))
+        .next()
+        .map(|(token, span)|
+            match token {
+                Ok(token) => Ok((span.start, token, span.end)),
+                Err(_) => Ok((span.start, Token::Error, span.end)),
+                // or specify your lexical error to parse error
+            }
+        )
     }
 }
 

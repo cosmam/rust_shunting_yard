@@ -1,7 +1,12 @@
 use std::error::{Error};
 use lalrpop_util::lalrpop_mod;
 
-lalrpop_mod!(pub calc);
+lalrpop_mod!(
+    #[allow(clippy::all)]
+    #[allow(clippy::pedantic)]
+    #[allow(dead_code)]
+    pub calc
+);
 
 pub mod tokens;
 pub mod lexer;
@@ -11,7 +16,9 @@ pub fn evaluate(text: &str) -> Result<(), Box<dyn Error>>
 {
     let lexer = lexer::Lexer::new(text);
     let parser = calc::ExpressionParser::new();
-    let ast = parser.parse(lexer)?;
+
+    let mut errors = Vec::new();
+    let ast = parser.parse(&mut errors, lexer)?;
 
     println!("{:?}", ast);
     Ok(())
