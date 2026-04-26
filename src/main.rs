@@ -1,6 +1,5 @@
 use std::error::{Error};
 use std::io::{self, Write};
-use shunting_yard;
 
 fn main() -> Result<(), Box<dyn Error>> {
     loop {
