@@ -1,11 +1,11 @@
 use logos::Logos;
 use std::fmt; // to implement the Display trait later
-use std::num::{ParseFloatError, ParseIntError};
+use std::num::{ParseFloatError, ParseIntError, FpCategory};
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub enum LexicalError {
-    InvalidInteger(ParseIntError),
-    InvalidFloat(ParseFloatError),
+    InvalidInteger(String),
+    InvalidFloat(String),
     UnknownSymbol(String),
     #[default]
     InvalidToken,
@@ -13,17 +13,21 @@ pub enum LexicalError {
 
 impl From<ParseIntError> for LexicalError {
     fn from(err: ParseIntError) -> Self {
-        LexicalError::InvalidInteger(err)
+        LexicalError::InvalidInteger(err.to_string())
     }
 }
 
 impl From<ParseFloatError> for LexicalError {
     fn from(err: ParseFloatError) -> Self {
-        LexicalError::InvalidFloat(err)
+        LexicalError::InvalidFloat(err.to_string())
     }
 }
 
-// TODO: add error handling for other symbols
+impl LexicalError {
+    fn from_lexer(lex: &mut logos::Lexer<'_, Token>) -> Self {
+        LexicalError::UnknownSymbol(lex.slice().to_string())
+    }
+}
 
 fn parse_hex(lex: &mut logos::Lexer<Token>) -> Option<isize> {
     let slice = lex.slice();
@@ -31,9 +35,19 @@ fn parse_hex(lex: &mut logos::Lexer<Token>) -> Option<isize> {
     isize::from_str_radix(cleaned, 16).ok()
 }
 
+fn parse_float(lex: &mut logos::Lexer<Token>) -> Result<f64, LexicalError> {
+    let result = lex.slice().parse::<f64>()?;
+    match result.classify() {
+        FpCategory::Nan => Err(LexicalError::InvalidFloat("NaN".to_owned())),
+        FpCategory::Infinite=> Err(LexicalError::InvalidFloat("Infinite".to_owned())),
+        FpCategory::Subnormal=> Err(LexicalError::InvalidFloat("Subnormal".to_owned())),
+        _ => Ok(result)
+    }
+}
+
 #[derive(Logos, Debug, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")]
-#[logos(error = LexicalError)]
+#[logos(error(LexicalError, LexicalError::from_lexer))]
 pub enum Token {
     #[token("(")]
     LeftParen,
@@ -169,19 +183,19 @@ pub enum Token {
     #[token(",")]
     Comma,
 
-    #[regex("[0-9]+", |lex| lex.slice().parse::<isize>().unwrap())]
+    #[regex("[0-9]+", |lex| lex.slice().parse::<isize>())]
     Integer(isize),
 
     #[regex(r"0x[[:xdigit:]]+", callback = parse_hex)]
     Hexadecimal(isize),
 
-    #[regex(r"(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+|[0-9]+)(?:[eE][-+]?[0-9]+)|[-+]?(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)", |lex| lex.slice().parse::<f64>().unwrap())]
+    #[regex(r"(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+|[0-9]+)(?:[eE][-+]?[0-9]+)|[-+]?(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)", callback = parse_float)]
     Float(f64),
 
     #[regex(r"[_[:alpha:]][_\.\w\d]*(?:\[\d+\])?", |lex| lex.slice().to_owned())]
     Variable(String),
 
-    Error,
+    Error(LexicalError),
 }
 
 impl fmt::Display for Token {

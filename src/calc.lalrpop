@@ -10,7 +10,7 @@ extern {
     type Error = LexicalError;
 
     enum Token {
-        "error" => Token::Error,
+        "error" => Token::Error(LexicalError),
         "integer literal" => Token::Integer(<isize>),
         "hex literal" => Token::Hexadecimal(<isize>),
         "float literal" => Token::Float(<f64>),

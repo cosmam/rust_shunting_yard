@@ -26,7 +26,7 @@ impl<'input> Iterator for Lexer<'input> {
         .map(|(token, span)|
             match token {
                 Ok(token) => Ok((span.start, token, span.end)),
-                Err(_) => Ok((span.start, Token::Error, span.end)),
+                Err(err) => Ok((span.start, Token::Error(err), span.end)),
                 // or specify your lexical error to parse error
             }
         )
@@ -81,7 +81,7 @@ mod tests {
         assert_eq!(lex.span(), 0..1);
         assert_eq!(lex.slice(), "(");
 
-        assert_eq!(lex.next(), Some(Ok(Token::Double(12.3))));
+        assert_eq!(lex.next(), Some(Ok(Token::Float(12.3))));
         assert_eq!(lex.span(), 1..5);
         assert_eq!(lex.slice(), "12.3");
 
@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(lex.span(), 0..2);
         assert_eq!(lex.slice(), "23");
 
-        assert_eq!(lex.next(), Some(Ok(Token::IsEquals)));
+        assert_eq!(lex.next(), Some(Ok(Token::Equals)));
         assert_eq!(lex.span(), 2..4);
         assert_eq!(lex.slice(), "==");
 
@@ -1055,4 +1055,46 @@ mod tests {
         assert_eq!(lex.span(), 1..3);
         assert_eq!(lex.slice(), "23");
     }
+    
+    #[test]
+    fn test_new_bitwise_not() {
+        let mut lex = Lexer::new("~23");
+
+        assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
+        assert_eq!(lex.next(), Some(Ok((1, Token::Integer(23), 3))));
+    }
+    
+    #[test]
+    fn test_new_lexing_error_unknown_symbol() {
+        let mut lex = Lexer::new("~23$");
+
+        assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
+        assert_eq!(lex.next(), Some(Ok((1, Token::Integer(23), 3))));
+        assert_eq!(lex.next(), Some(Ok((3, Token::Error(LexicalError::UnknownSymbol("$".to_string())), 4))));
+    }
+        
+    #[test]
+    fn test_new_lexing_error_parse_int() {
+        let mut lex = Lexer::new("~12345678901234567890");
+
+        assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
+        assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidInteger("number too large to fit in target type".to_owned())), 21))));
+    } 
+       
+    #[test]
+    fn test_new_lexing_error_parse_float_infinite() {
+        let mut lex = Lexer::new("~12.1e320");
+
+        assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
+        assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidFloat("Infinite".to_owned())), 9))));
+    }     
+       
+    #[test]
+    fn test_new_lexing_error_parse_float_subnormal() {
+        let mut lex = Lexer::new("~12.1e-320");
+
+        assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
+        assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidFloat("Subnormal".to_owned())), 10))));
+    } 
+
 }

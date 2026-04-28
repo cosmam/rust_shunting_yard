@@ -1,16 +1,16 @@
 use std::error::{Error};
 use lalrpop_util::lalrpop_mod;
 
+pub mod tokens;
+pub mod lexer;
+pub mod ast;
+
 lalrpop_mod!(
     #[allow(clippy::all)]
     #[allow(clippy::pedantic)]
     #[allow(dead_code)]
     pub calc
 );
-
-pub mod tokens;
-pub mod lexer;
-pub mod ast;
 
 pub fn evaluate(text: &str) -> Result<(), Box<dyn Error>>
 {
@@ -24,17 +24,3 @@ pub fn evaluate(text: &str) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-/************** Test Functions **************/
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-
-//     #[test]
-//     fn shunting_yards() {
-//         assert!(shunting_yards::TermParser::new().parse("22").is_ok());
-//         assert!(shunting_yards::TermParser::new().parse("(22)").is_ok());
-//         assert!(shunting_yards::TermParser::new().parse("((((22))))").is_ok());
-//         assert!(shunting_yards::TermParser::new().parse("((22)").is_err());
-//     }
-// }
