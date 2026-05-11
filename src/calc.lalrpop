@@ -106,7 +106,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="5")] #[assoc(side="left")]
+    #[precedence(level="3")] #[assoc(side="right")]
     <lhs:Expression> "**" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
