@@ -1096,5 +1096,13 @@ mod tests {
         assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
         assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidFloat("Subnormal".to_owned())), 10))));
     } 
+       
+    #[test]
+    fn test_new_lexing_error_parse_float_nan() {
+        let mut lex = Lexer::new("~NAN");
+
+        assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
+        assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidFloat("NaN".to_owned())), 4))));
+    } 
 
 }
