@@ -261,114 +261,6 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    "min" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Min,
-        arguments
-        })
-    },
-    "max" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Max,
-        arguments
-        })
-    },
-    "pow" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Power,
-        arguments
-        })
-    },
-    "mod" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Modulo,
-        arguments
-        })
-    },
-    "rem" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Remainder,
-        arguments
-        })
-    },
-    "round" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Round,
-        arguments
-        })
-    },
-    "cos" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Cos,
-        arguments
-        })
-    },
-    "sin" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Sin,
-        arguments
-        })
-    },
-    "tan" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Tan,
-        arguments
-        })
-    },
-    "acos" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::ACos,
-        arguments
-        })
-    },
-    "asin" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::ASin,
-        arguments
-        })
-    },
-    "atan" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::ATan,
-        arguments
-        })
-    },
-    "abs" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Abs,
-        arguments
-        })
-    },
-    "ln" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Ln,
-        arguments
-        })
-    },
-    "log" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Log,
-        arguments
-        })
-    },
-    "exp" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Exp,
-        arguments
-        })
-    },
-    "floor" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Floor,
-        arguments
-        })
-    },
-    "ceiling" "(" <arguments:ExpressionList> ")" => {
-        Box::new(ast::Expression::Function {
-        func: ast::Func::Ceiling,
-        arguments
-        })
-    },
 }
 
 Comma<T>: Vec<T> = {
@@ -376,6 +268,36 @@ Comma<T>: Vec<T> = {
         None => v,
         Some(e) => { v.push(e); v }
     }
+};
+
+FunctionName: ast::Func = {
+    "min" => ast::Func::Min,
+    "max" => ast::Func::Max,
+    "pow" => ast::Func::Power,
+    "mod" => ast::Func::Modulo,
+    "rem" => ast::Func::Remainder,
+    "round" => ast::Func::Round,
+    "cos" => ast::Func::Cos,
+    "sin" => ast::Func::Sin,
+    "tan" => ast::Func::Tan,
+    "acos" => ast::Func::ACos,
+    "asin" => ast::Func::ASin,
+    "atan" => ast::Func::ATan,
+    "abs" => ast::Func::Abs,
+    "ln" => ast::Func::Ln,
+    "log" => ast::Func::Log,
+    "exp" => ast::Func::Exp,
+    "floor" => ast::Func::Floor,
+    "ceiling" => ast::Func::Ceiling,
+};
+
+FunctionCall: Box<ast::Expression> = {
+    <func:FunctionName> "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func,
+        arguments
+        })
+    },
 };
 
 pub Term: Box<ast::Expression> = {
@@ -392,6 +314,7 @@ pub Term: Box<ast::Expression> = {
         Box::new(ast::Expression::Variable(val))
     },
     "(" <Expression> ")",
+    FunctionCall,
     ! => { errors.push(<>); Box::new(ast::Expression::Error) },
 }
 
