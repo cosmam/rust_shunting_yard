@@ -78,6 +78,8 @@ mod tests {
     use rstest::*;
     lalrpop_mod!(pub calc); // Load the generated module
 
+    /************ Single-symbol parsing tests *************/
+
     #[rstest]
     #[case("1.", 1.0)]
     #[case("1.1", 1.1)]
@@ -259,8 +261,74 @@ mod tests {
         );
     }
 
-    // associativity
-    // precedence
+    /************ Associativity tests *************/
+
+    #[rstest]
+    #[case("==", Opcode::Equals)]
+    #[case("!=", Opcode::NotEquals)]
+    #[case("/=", Opcode::NotEquals)]
+    #[case("<=", Opcode::LessThanEquals)]
+    #[case(">=", Opcode::GreaterThanEquals)]
+    #[case("~=", Opcode::ApproximatelyEquals)]
+    #[case("*", Opcode::Multiply)]
+    #[case("/", Opcode::Divide)]
+    #[case("+", Opcode::Plus)]
+    #[case("-", Opcode::Minus)]
+    #[case("%", Opcode::Modulo)]
+    #[case("&&", Opcode::LogicalAnd)]
+    #[case("||", Opcode::LogicalOr)]
+    #[case("<<", Opcode::BitshiftLeft)]
+    #[case(">>", Opcode::BitshiftRight)]
+    #[case("&", Opcode::BitwiseAnd)]
+    #[case("|", Opcode::BitwiseOr)]
+    #[case("<", Opcode::LessThan)]
+    #[case(">", Opcode::GreaterThan)]
+    fn test_is_left_associative(#[case] op_str: &str, #[case] expected: Opcode) {
+        let input = format!("1 {} 2 {} 3", op_str, op_str);
+        let lexer = lexer::Lexer::new(&input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::BinaryOperation {
+                lhs: Box::new(Expression::BinaryOperation {
+                    lhs: Box::new(Expression::Integer(1)),
+                    operator: expected.clone(),
+                    rhs: Box::new(Expression::Integer(2)),
+                }),
+                operator: expected.clone(),
+                rhs: Box::new(Expression::Integer(3)),
+            }))
+        );
+    }
+
+    #[rstest]
+    #[case("**", Opcode::Power)]
+    fn test_is_right_associative(#[case] op_str: &str, #[case] expected: Opcode) {
+        let input = format!("1 {} 2 {} 3", op_str, op_str);
+        let lexer = lexer::Lexer::new(&input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::BinaryOperation {
+                lhs: Box::new(Expression::Integer(1)),
+                operator: expected.clone(),
+                rhs: Box::new(Expression::BinaryOperation {
+                    lhs: Box::new(Expression::Integer(2)),
+                    operator: expected.clone(),
+                    rhs: Box::new(Expression::Integer(3)),
+                }),
+            }))
+        );
+    }
+
+    /************ Precedence tests *************/
+
     // expressions in function
     // error conditions
 }

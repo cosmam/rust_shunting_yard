@@ -66,7 +66,7 @@ pub Expression: Box<ast::Expression> = {
     #[precedence(level="1")]
     Term,
 
-    #[precedence(level="16")] #[assoc(side="left")]
+    #[precedence(level="13")] #[assoc(side="left")]
     <lhs:Expression> "==" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -74,7 +74,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="16")] #[assoc(side="left")]
+    #[precedence(level="13")] #[assoc(side="left")]
     <lhs:Expression> "!=" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -82,7 +82,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="9")] #[assoc(side="left")]
+    #[precedence(level="8")] #[assoc(side="left")]
     <lhs:Expression> "<=" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -90,7 +90,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="9")] #[assoc(side="left")]
+    #[precedence(level="8")] #[assoc(side="left")]
     <lhs:Expression> ">=" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -98,7 +98,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="16")] #[assoc(side="left")]
+    #[precedence(level="13")] #[assoc(side="left")]
     <lhs:Expression> "~=" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -162,7 +162,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="14")] #[assoc(side="left")]
+    #[precedence(level="11")] #[assoc(side="left")]
     <lhs:Expression> "&&" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -170,7 +170,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="15")] #[assoc(side="left")]
+    #[precedence(level="12")] #[assoc(side="left")]
     <lhs:Expression> "||" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -194,7 +194,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="9")] #[assoc(side="left")]
+    #[precedence(level="8")] #[assoc(side="left")]
     <lhs:Expression> "<" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -202,7 +202,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="9")] #[assoc(side="left")]
+    #[precedence(level="8")] #[assoc(side="left")]
     <lhs:Expression> ">" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -245,7 +245,7 @@ pub Expression: Box<ast::Expression> = {
         operator: ast::Opcode::BitwiseNot
         })
     },
-    #[precedence(level="11")] #[assoc(side="left")]
+    #[precedence(level="9")] #[assoc(side="left")]
     <lhs:Expression> "&" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -253,7 +253,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="13")] #[assoc(side="left")]
+    #[precedence(level="10")] #[assoc(side="left")]
     <lhs:Expression> "|" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
