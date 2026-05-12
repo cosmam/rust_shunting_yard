@@ -949,6 +949,91 @@ mod tests {
         );
     }
 
-    // expressions in function
+    /************ Function syntax tests *************/
+
+    #[rstest]
+    #[case("min", Func::Min)]
+    #[case("max", Func::Max)]
+    #[case("pow", Func::Power)]
+    #[case("mod", Func::Modulo)]
+    #[case("rem", Func::Remainder)]
+    #[case("round", Func::Round)]
+    #[case("acos", Func::ACos)]
+    #[case("asin", Func::ASin)]
+    #[case("atan", Func::ATan)]
+    #[case("abs", Func::Abs)]
+    #[case("ln", Func::Ln)]
+    #[case("log", Func::Log)]
+    #[case("exp", Func::Exp)]
+    #[case("floor", Func::Floor)]
+    #[case("ceil", Func::Ceiling)]
+    #[case("ceiling", Func::Ceiling)]
+    #[case("cos", Func::Cos)]
+    #[case("sin", Func::Sin)]
+    #[case("tan", Func::Tan)]
+    fn test_parse_function_multivalue(#[case] op_str: &str, #[case] expected: Func) {
+        let input = format!("{}(10, 12.1, Test_Name)", op_str);
+        let lexer = lexer::Lexer::new(&input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        let values: Vec<Box<Expression>> = vec![
+            Box::new(Expression::Integer(10)),
+            Box::new(Expression::Float(12.1)),
+            Box::new(Expression::Variable("Test_Name".to_string())),
+        ];
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::Function {
+                func: expected,
+                arguments: values,
+            }))
+        );
+    }
+
+    #[rstest]
+    #[case("min", Func::Min)]
+    #[case("max", Func::Max)]
+    #[case("pow", Func::Power)]
+    #[case("mod", Func::Modulo)]
+    #[case("rem", Func::Remainder)]
+    #[case("round", Func::Round)]
+    #[case("acos", Func::ACos)]
+    #[case("asin", Func::ASin)]
+    #[case("atan", Func::ATan)]
+    #[case("abs", Func::Abs)]
+    #[case("ln", Func::Ln)]
+    #[case("log", Func::Log)]
+    #[case("exp", Func::Exp)]
+    #[case("floor", Func::Floor)]
+    #[case("ceil", Func::Ceiling)]
+    #[case("ceiling", Func::Ceiling)]
+    #[case("cos", Func::Cos)]
+    #[case("sin", Func::Sin)]
+    #[case("tan", Func::Tan)]
+    fn test_parse_function_multivalue_trailing_comma(#[case] op_str: &str, #[case] expected: Func) {
+        let input = format!("{}(10, 12.1, Test_Name, )", op_str);
+        let lexer = lexer::Lexer::new(&input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        let values: Vec<Box<Expression>> = vec![
+            Box::new(Expression::Integer(10)),
+            Box::new(Expression::Float(12.1)),
+            Box::new(Expression::Variable("Test_Name".to_string())),
+        ];
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::Function {
+                func: expected,
+                arguments: values,
+            }))
+        );
+    }
+
     // error conditions
 }
