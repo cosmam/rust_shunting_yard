@@ -190,7 +190,7 @@ pub enum Token {
     #[regex(r"0x[[:xdigit:]]+", callback = parse_hex)]
     Hexadecimal(isize),
 
-    #[regex(r"(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+|[0-9]+)(?:[eE][-+]?[0-9]+)|[-+]?(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)", callback = parse_float)]
+    #[regex(r"(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+|[0-9]+)(?:[eE][-+]?[0-9]+)|(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)", callback = parse_float)]
     #[regex(r"NaN|nan|NAN|NaN32|NaN64", callback = parse_float, priority=5)]
     Float(f64),
 

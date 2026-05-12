@@ -38,6 +38,7 @@ impl<'input> Iterator for Lexer<'input> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::*;
 
     #[test]
     fn test_integer_parens() {
@@ -1105,4 +1106,34 @@ mod tests {
         assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidFloat("NaN".to_owned())), 4))));
     } 
 
+    #[rstest]
+	#[case("1.", 1.0)]
+	#[case("1.1", 1.1)]
+	#[case(".1", 0.1)]
+	#[case("2.1e2", 210.0)]
+	#[case("2.1e+2", 210.0)]
+	#[case("2.1e-2", 0.021)]
+	#[case("2.1E2", 210.0)]
+	#[case("2.1E+2", 210.0)]
+	#[case("2.1E-2", 0.021)]	
+	#[case("3e2", 300.0)]
+	#[case("3e+2", 300.0)]
+	#[case("3e-2", 0.03)]
+	#[case("3E2", 300.0)]
+	#[case("3E+2", 300.0)]
+	#[case("3E-2", 0.03)]
+	#[case(".4e2", 40.0)]
+	#[case(".4e+2", 40.0)]
+	#[case(".4e-2", 0.004)]
+	#[case(".4E2", 40.0)]
+	#[case(".4E+2", 40.0)]
+	#[case(".4E-2", 0.004)] 
+    fn test_parse_floats(#[case] input: &str, #[case] expected: f64) {
+        let mut lex = Token::lexer(input);
+
+        assert_eq!(
+            lex.next(),
+            Some(Ok(Token::Float(expected)))
+        );
+    }
 }
