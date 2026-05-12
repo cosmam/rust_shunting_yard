@@ -1,9 +1,9 @@
-use std::error::{Error};
 use lalrpop_util::lalrpop_mod;
+use std::error::Error;
 
-pub mod tokens;
-pub mod lexer;
 pub mod ast;
+pub mod lexer;
+pub mod tokens;
 
 lalrpop_mod!(
     #[allow(clippy::all)]
@@ -12,8 +12,7 @@ lalrpop_mod!(
     pub calc
 );
 
-pub fn evaluate(text: &str) -> Result<(), Box<dyn Error>>
-{
+pub fn evaluate(text: &str) -> Result<(), Box<dyn Error>> {
     let lexer = lexer::Lexer::new(text);
     let parser = calc::ExpressionParser::new();
 
@@ -23,4 +22,3 @@ pub fn evaluate(text: &str) -> Result<(), Box<dyn Error>>
     println!("{:?}", ast);
     Ok(())
 }
-

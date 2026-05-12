@@ -1,5 +1,5 @@
-use logos::{Logos, SpannedIter};
-use crate::tokens::{LexicalError, Token}; // your Token enum, as above
+use crate::tokens::{LexicalError, Token};
+use logos::{Logos, SpannedIter}; // your Token enum, as above
 
 pub type Spanned<Tok, Loc, Error> = Result<(Loc, Tok, Loc), Error>;
 
@@ -21,15 +21,11 @@ impl<'input> Iterator for Lexer<'input> {
     type Item = Spanned<Token, usize, LexicalError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.token_stream
-        .next()
-        .map(|(token, span)|
-            match token {
-                Ok(token) => Ok((span.start, token, span.end)),
-                Err(err) => Ok((span.start, Token::Error(err), span.end)),
-                // or specify your lexical error to parse error
-            }
-        )
+        self.token_stream.next().map(|(token, span)| match token {
+            Ok(token) => Ok((span.start, token, span.end)),
+            Err(err) => Ok((span.start, Token::Error(err), span.end)),
+            // or specify your lexical error to parse error
+        })
     }
 }
 
@@ -1056,7 +1052,7 @@ mod tests {
         assert_eq!(lex.span(), 1..3);
         assert_eq!(lex.slice(), "23");
     }
-    
+
     #[test]
     fn test_new_bitwise_not() {
         let mut lex = Lexer::new("~23");
@@ -1064,76 +1060,110 @@ mod tests {
         assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
         assert_eq!(lex.next(), Some(Ok((1, Token::Integer(23), 3))));
     }
-    
+
     #[test]
     fn test_new_lexing_error_unknown_symbol() {
         let mut lex = Lexer::new("~23$");
 
         assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
         assert_eq!(lex.next(), Some(Ok((1, Token::Integer(23), 3))));
-        assert_eq!(lex.next(), Some(Ok((3, Token::Error(LexicalError::UnknownSymbol("$".to_string())), 4))));
+        assert_eq!(
+            lex.next(),
+            Some(Ok((
+                3,
+                Token::Error(LexicalError::UnknownSymbol("$".to_string())),
+                4
+            )))
+        );
     }
-        
+
     #[test]
     fn test_new_lexing_error_parse_int() {
         let mut lex = Lexer::new("~12345678901234567890");
 
         assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
-        assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidInteger("number too large to fit in target type".to_owned())), 21))));
-    } 
-       
+        assert_eq!(
+            lex.next(),
+            Some(Ok((
+                1,
+                Token::Error(LexicalError::InvalidInteger(
+                    "number too large to fit in target type".to_owned()
+                )),
+                21
+            )))
+        );
+    }
+
     #[test]
     fn test_new_lexing_error_parse_float_infinite() {
         let mut lex = Lexer::new("~12.1e320");
 
         assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
-        assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidFloat("Infinite".to_owned())), 9))));
-    }     
-       
+        assert_eq!(
+            lex.next(),
+            Some(Ok((
+                1,
+                Token::Error(LexicalError::InvalidFloat("Infinite".to_owned())),
+                9
+            )))
+        );
+    }
+
     #[test]
     fn test_new_lexing_error_parse_float_subnormal() {
         let mut lex = Lexer::new("~12.1e-320");
 
         assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
-        assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidFloat("Subnormal".to_owned())), 10))));
-    } 
-       
+        assert_eq!(
+            lex.next(),
+            Some(Ok((
+                1,
+                Token::Error(LexicalError::InvalidFloat("Subnormal".to_owned())),
+                10
+            )))
+        );
+    }
+
     #[test]
     fn test_new_lexing_error_parse_float_nan() {
         let mut lex = Lexer::new("~NAN");
 
         assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
-        assert_eq!(lex.next(), Some(Ok((1, Token::Error(LexicalError::InvalidFloat("NaN".to_owned())), 4))));
-    } 
+        assert_eq!(
+            lex.next(),
+            Some(Ok((
+                1,
+                Token::Error(LexicalError::InvalidFloat("NaN".to_owned())),
+                4
+            )))
+        );
+    }
 
     #[rstest]
-	#[case("1.", 1.0)]
-	#[case("1.1", 1.1)]
-	#[case(".1", 0.1)]
-	#[case("2.1e2", 210.0)]
-	#[case("2.1e+2", 210.0)]
-	#[case("2.1e-2", 0.021)]
-	#[case("2.1E2", 210.0)]
-	#[case("2.1E+2", 210.0)]
-	#[case("2.1E-2", 0.021)]	
-	#[case("3e2", 300.0)]
-	#[case("3e+2", 300.0)]
-	#[case("3e-2", 0.03)]
-	#[case("3E2", 300.0)]
-	#[case("3E+2", 300.0)]
-	#[case("3E-2", 0.03)]
-	#[case(".4e2", 40.0)]
-	#[case(".4e+2", 40.0)]
-	#[case(".4e-2", 0.004)]
-	#[case(".4E2", 40.0)]
-	#[case(".4E+2", 40.0)]
-	#[case(".4E-2", 0.004)] 
+    #[case("1.", 1.0)]
+    #[case("1.1", 1.1)]
+    #[case(".1", 0.1)]
+    #[case("2.1e2", 210.0)]
+    #[case("2.1e+2", 210.0)]
+    #[case("2.1e-2", 0.021)]
+    #[case("2.1E2", 210.0)]
+    #[case("2.1E+2", 210.0)]
+    #[case("2.1E-2", 0.021)]
+    #[case("3e2", 300.0)]
+    #[case("3e+2", 300.0)]
+    #[case("3e-2", 0.03)]
+    #[case("3E2", 300.0)]
+    #[case("3E+2", 300.0)]
+    #[case("3E-2", 0.03)]
+    #[case(".4e2", 40.0)]
+    #[case(".4e+2", 40.0)]
+    #[case(".4e-2", 0.004)]
+    #[case(".4E2", 40.0)]
+    #[case(".4E+2", 40.0)]
+    #[case(".4E-2", 0.004)]
     fn test_parse_floats(#[case] input: &str, #[case] expected: f64) {
         let mut lex = Token::lexer(input);
 
-        assert_eq!(
-            lex.next(),
-            Some(Ok(Token::Float(expected)))
-        );
+        assert_eq!(lex.next(), Some(Ok(Token::Float(expected))));
     }
 }

@@ -1,7 +1,7 @@
 use logos::Logos;
-use logos_display::{Display, Debug};
+use logos_display::{Debug, Display};
 use std::fmt; // to implement the Display trait later
-use std::num::{ParseFloatError, ParseIntError, FpCategory};
+use std::num::{FpCategory, ParseFloatError, ParseIntError};
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub enum LexicalError {
@@ -40,9 +40,9 @@ fn parse_float(lex: &mut logos::Lexer<Token>) -> Result<f64, LexicalError> {
     let result = lex.slice().parse::<f64>()?;
     match result.classify() {
         FpCategory::Nan => Err(LexicalError::InvalidFloat("NaN".to_owned())),
-        FpCategory::Infinite=> Err(LexicalError::InvalidFloat("Infinite".to_owned())),
-        FpCategory::Subnormal=> Err(LexicalError::InvalidFloat("Subnormal".to_owned())),
-        _ => Ok(result)
+        FpCategory::Infinite => Err(LexicalError::InvalidFloat("Infinite".to_owned())),
+        FpCategory::Subnormal => Err(LexicalError::InvalidFloat("Subnormal".to_owned())),
+        _ => Ok(result),
     }
 }
 
@@ -213,16 +213,15 @@ impl fmt::Display for LexicalError {
 
 impl std::error::Error for LexicalError {}
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_parse_float_error_transformation() {
-        let error_instance = "not_a_float".parse::<f64>().unwrap_err();        
+        let error_instance = "not_a_float".parse::<f64>().unwrap_err();
         let custom_err = LexicalError::from(error_instance);
-        
+
         assert_eq!(
             custom_err,
             LexicalError::InvalidFloat("invalid float literal".to_string())
@@ -232,29 +231,28 @@ mod tests {
     #[test]
     fn test_display_lexical_error_token() {
         let lexical_error = LexicalError::InvalidToken;
-        
+
         assert_eq!(format!("{}", lexical_error), "Invalid Token");
     }
 
     #[test]
     fn test_display_lexical_error_integer() {
         let lexical_error = LexicalError::InvalidInteger("Test".to_string());
-        
+
         assert_eq!(format!("{}", lexical_error), "Invalid Integer: Test");
     }
 
     #[test]
     fn test_display_lexical_error_float() {
         let lexical_error = LexicalError::InvalidFloat("Test".to_string());
-        
+
         assert_eq!(format!("{}", lexical_error), "Invalid Float: Test");
     }
 
     #[test]
     fn test_display_lexical_error_symbol() {
         let lexical_error = LexicalError::UnknownSymbol("Test".to_string());
-        
+
         assert_eq!(format!("{}", lexical_error), "Unknown Symbol: Test");
     }
-
 }

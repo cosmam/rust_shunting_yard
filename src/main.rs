@@ -1,4 +1,4 @@
-use std::error::{Error};
+use std::error::Error;
 use std::io::{self, Write};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -19,9 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             break;
         }
 
-        let _ = shunting_yard::evaluate(&input).map_err(|e| {
-            eprintln!("Detailed log: {:?}", e)
-        });
+        let _ = shunting_yard::evaluate(&input).map_err(|e| eprintln!("Detailed log: {:?}", e));
     }
 
     Ok(())
