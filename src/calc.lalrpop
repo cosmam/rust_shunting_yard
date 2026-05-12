@@ -82,7 +82,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="8")] #[assoc(side="left")]
+    #[precedence(level="7")] #[assoc(side="left")]
     <lhs:Expression> "<=" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -90,7 +90,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="8")] #[assoc(side="left")]
+    #[precedence(level="7")] #[assoc(side="left")]
     <lhs:Expression> ">=" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -114,7 +114,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="6")] #[assoc(side="left")]
+    #[precedence(level="5")] #[assoc(side="left")]
     <lhs:Expression> "+" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -122,7 +122,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="6")] #[assoc(side="left")]
+    #[precedence(level="5")] #[assoc(side="left")]
     <lhs:Expression> "-" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -130,7 +130,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="5")] #[assoc(side="left")]
+    #[precedence(level="4")] #[assoc(side="left")]
     <lhs:Expression> "*" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -138,7 +138,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="5")] #[assoc(side="left")]
+    #[precedence(level="4")] #[assoc(side="left")]
     <lhs:Expression> "/" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -147,14 +147,6 @@ pub Expression: Box<ast::Expression> = {
         })
     },
     #[precedence(level="4")] #[assoc(side="left")]
-    <lhs:Expression> "^" <rhs:Expression> => {
-        Box::new(ast::Expression::BinaryOperation {
-        lhs,
-        operator: ast::Opcode::BitwiseXor,
-        rhs
-        })
-    },
-    #[precedence(level="5")] #[assoc(side="left")]
     <lhs:Expression> "%" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -178,7 +170,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="7")] #[assoc(side="left")]
+    #[precedence(level="6")] #[assoc(side="left")]
     <lhs:Expression> "<<" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -186,7 +178,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="7")] #[assoc(side="left")]
+    #[precedence(level="6")] #[assoc(side="left")]
     <lhs:Expression> ">>" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -194,7 +186,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="8")] #[assoc(side="left")]
+    #[precedence(level="7")] #[assoc(side="left")]
     <lhs:Expression> "<" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -202,7 +194,7 @@ pub Expression: Box<ast::Expression> = {
         rhs
         })
     },
-    #[precedence(level="8")] #[assoc(side="left")]
+    #[precedence(level="7")] #[assoc(side="left")]
     <lhs:Expression> ">" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
@@ -245,11 +237,19 @@ pub Expression: Box<ast::Expression> = {
         operator: ast::Opcode::BitwiseNot
         })
     },
-    #[precedence(level="9")] #[assoc(side="left")]
+    #[precedence(level="8")] #[assoc(side="left")]
     <lhs:Expression> "&" <rhs:Expression> => {
         Box::new(ast::Expression::BinaryOperation {
         lhs,
         operator: ast::Opcode::BitwiseAnd,
+        rhs
+        })
+    },
+    #[precedence(level="9")] #[assoc(side="left")]
+    <lhs:Expression> "^" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::BitwiseXor,
         rhs
         })
     },
