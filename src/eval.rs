@@ -1,50 +1,59 @@
-//! Evaluation support for parsed expressions.
+//! Evaluation for parsed expressions.
 //!
 //! # Overview
 //!
-//! TODO: Describe how expressions are evaluated and how variables are resolved.
+//! This module evaluates an [`Expression`] tree into a runtime [`Value`]. Literal
+//! values evaluate directly, variables are resolved from a caller-provided
+//! binding map, and compound expressions are evaluated recursively before their
+//! operators or functions are applied.
 //!
 //! # Errors
 //!
-//! TODO: Describe the evaluation errors this module can return.
+//! Evaluation returns [`EvalError`] when an expression cannot be evaluated, a
+//! referenced variable is missing, or an operator is used with the wrong arity.
 
 use crate::ast::{Expression, Func, Opcode};
 use std::collections::HashMap;
 
 /// Runtime value produced by expression evaluation.
-///
-/// # Variants
-///
-/// TODO: Document the value variants and any conversion rules between them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
+    /// Boolean value.
     Bool(bool),
+    /// Signed integer value.
     Integer(isize),
+    /// Floating-point value.
     Float(f64),
 }
 
 /// Error returned when expression evaluation fails.
-///
-/// # Variants
-///
-/// TODO: Document each failure mode and when it is emitted.
 #[derive(Clone, Debug, PartialEq)]
 pub enum EvalError {
+    /// An operator or function was used with an unsupported number of operands.
     InvalidArity,
+    /// The expression tree contains an error node or lexical error node.
     InvalidExpression,
+    /// A variable reference could not be found in the provided bindings.
     UnknownVariable(String),
 }
 
 /// Evaluate an expression into a runtime value.
 ///
-/// # Parameters
-///
-/// - `expr`: TODO: Document the expression being evaluated.
-/// - `variables`: TODO: Document the variable bindings available during evaluation.
+/// `expr` is evaluated recursively. Literal expression nodes become their
+/// corresponding [`Value`] variants, variable nodes are looked up in
+/// `variables`, and compound nodes delegate to the appropriate unary, binary, or
+/// function evaluator after their child expressions have been evaluated.
 ///
 /// # Errors
 ///
-/// TODO: Document the conditions that return `EvalError`.
+/// Returns [`EvalError::UnknownVariable`] when `expr` references a variable that
+/// is not present in `variables`.
+///
+/// Returns [`EvalError::InvalidExpression`] when `expr` contains an
+/// [`Expression::Error`] or [`Expression::LexicalError`] node.
+///
+/// Returns [`EvalError::InvalidArity`] when a unary or binary operator is used
+/// in a position where that operator is not supported.
 pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Value, EvalError> {
     match expr {
         Expression::Bool(n) => Ok(Value::Bool(*n)),
