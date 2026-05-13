@@ -85,8 +85,6 @@ fn apply_binary(
             apply_binary_bit_operation(op, lhs, rhs, variables)
         }
         Opcode::Degrees
-        | Opcode::Minus
-        | Opcode::Modulo
         | Opcode::BitwiseNot
         | Opcode::LogicalNot => Err(EvalError::InvalidArity),
     }
