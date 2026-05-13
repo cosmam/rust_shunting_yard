@@ -1,8 +1,15 @@
+//! Token and lexical error definitions.
+//!
+//! # Overview
+//!
+//! TODO: Describe the token grammar and lexical error handling.
+
 use logos::Logos;
 use logos_display::{Debug, Display};
 use std::fmt; // to implement the Display trait later
 use std::num::{FpCategory, ParseFloatError, ParseIntError};
 
+/// TODO: Document this enum.
 #[derive(Default, Debug, Clone, PartialEq)]
 pub enum LexicalError {
     InvalidInteger(String),
@@ -13,29 +20,34 @@ pub enum LexicalError {
 }
 
 impl From<ParseIntError> for LexicalError {
+    /// TODO: Document this function.
     fn from(err: ParseIntError) -> Self {
         LexicalError::InvalidInteger(err.to_string())
     }
 }
 
 impl From<ParseFloatError> for LexicalError {
+    /// TODO: Document this function.
     fn from(err: ParseFloatError) -> Self {
         LexicalError::InvalidFloat(err.to_string())
     }
 }
 
 impl LexicalError {
+    /// TODO: Document this function.
     fn from_lexer<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Self {
         LexicalError::UnknownSymbol(lex.slice().to_string())
     }
 }
 
+/// TODO: Document this function.
 fn parse_hex<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Option<isize> {
     let slice = lex.slice();
     let cleaned = slice.strip_prefix("0x").unwrap_or(slice);
     isize::from_str_radix(cleaned, 16).ok()
 }
 
+/// TODO: Document this function.
 fn parse_float<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<f64, LexicalError> {
     let result = lex.slice().parse::<f64>()?;
     match result.classify() {
@@ -46,6 +58,7 @@ fn parse_float<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<f64, Lexical
     }
 }
 
+/// TODO: Document this enum.
 #[derive(Logos, Debug, Display, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")]
 #[logos(error(LexicalError, LexicalError::from_lexer))]
@@ -201,6 +214,7 @@ pub enum Token<'source> {
 }
 
 impl fmt::Display for LexicalError {
+    /// TODO: Document this function.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LexicalError::InvalidToken => write!(f, "Invalid Token"),
@@ -218,6 +232,7 @@ mod tests {
     use super::*;
 
     #[test]
+    /// TODO: Document this function.
     fn test_parse_float_error_transformation() {
         let error_instance = "not_a_float".parse::<f64>().unwrap_err();
         let custom_err = LexicalError::from(error_instance);
@@ -229,6 +244,7 @@ mod tests {
     }
 
     #[test]
+    /// TODO: Document this function.
     fn test_display_lexical_error_token() {
         let lexical_error = LexicalError::InvalidToken;
 
@@ -236,6 +252,7 @@ mod tests {
     }
 
     #[test]
+    /// TODO: Document this function.
     fn test_display_lexical_error_integer() {
         let lexical_error = LexicalError::InvalidInteger("Test".to_string());
 
@@ -243,6 +260,7 @@ mod tests {
     }
 
     #[test]
+    /// TODO: Document this function.
     fn test_display_lexical_error_float() {
         let lexical_error = LexicalError::InvalidFloat("Test".to_string());
 
@@ -250,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    /// TODO: Document this function.
     fn test_display_lexical_error_symbol() {
         let lexical_error = LexicalError::UnknownSymbol("Test".to_string());
 

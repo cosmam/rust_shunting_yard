@@ -1,5 +1,12 @@
+//! Abstract syntax tree types for parsed expressions.
+//!
+//! # Overview
+//!
+//! TODO: Describe how parsed expressions, operators, and functions are represented.
+
 use crate::tokens::LexicalError;
 
+/// TODO: Document this enum.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expression<'input> {
     Bool(bool),
@@ -23,6 +30,7 @@ pub enum Expression<'input> {
     Error,
 }
 
+/// TODO: Document this enum.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Opcode {
     Equals,
@@ -50,6 +58,7 @@ pub enum Opcode {
     Degrees,
 }
 
+/// TODO: Document this enum.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Func {
     Min,
@@ -104,6 +113,7 @@ mod tests {
     #[case(".4E2", 40.0)]
     #[case(".4E+2", 40.0)]
     #[case(".4E-2", 0.004)]
+    /// TODO: Document this function.
     fn test_parse_floats(#[case] input: &str, #[case] expected: f64) {
         let lexer = lexer::Lexer::new(input);
         let parser = calc::ExpressionParser::new();
@@ -114,6 +124,7 @@ mod tests {
     }
 
     #[test]
+    /// TODO: Document this function.
     fn test_parse_integer() {
         let lexer = lexer::Lexer::new("146");
         let parser = calc::ExpressionParser::new();
@@ -124,6 +135,7 @@ mod tests {
     }
 
     #[test]
+    /// TODO: Document this function.
     fn test_parse_hex() {
         let lexer = lexer::Lexer::new("0xfe");
         let parser = calc::ExpressionParser::new();
@@ -134,6 +146,7 @@ mod tests {
     }
 
     #[test]
+    /// TODO: Document this function.
     fn test_parse_variable() {
         let lexer = lexer::Lexer::new("some_name[1]");
         let parser = calc::ExpressionParser::new();
@@ -144,6 +157,7 @@ mod tests {
     }
 
     #[test]
+    /// TODO: Document this function.
     fn test_parse_lexical_error_token() {
         let lexer = lexer::Lexer::new("$");
         let parser = calc::ExpressionParser::new();
@@ -180,6 +194,7 @@ mod tests {
     #[case("|", Opcode::BitwiseOr)]
     #[case("<", Opcode::LessThan)]
     #[case(">", Opcode::GreaterThan)]
+    /// TODO: Document this function.
     fn test_parse_binary_operators(#[case] op_str: &str, #[case] expected: Opcode) {
         let input = format!("1 {} 2", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -202,6 +217,7 @@ mod tests {
     #[case("+", Opcode::Plus)]
     #[case("-", Opcode::Minus)]
     #[case("!", Opcode::LogicalNot)]
+    /// TODO: Document this function.
     fn test_parse_unary_operators_left(#[case] op_str: &str, #[case] expected: Opcode) {
         let input = format!("{}3.1", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -220,6 +236,7 @@ mod tests {
 
     #[rstest]
     #[case("°", Opcode::Degrees)]
+    /// TODO: Document this function.
     fn test_parse_unary_operators_right(#[case] op_str: &str, #[case] expected: Opcode) {
         let input = format!("3.1{}", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -257,6 +274,7 @@ mod tests {
     #[case("cos", Func::Cos)]
     #[case("sin", Func::Sin)]
     #[case("tan", Func::Tan)]
+    /// TODO: Document this function.
     fn test_parse_function_names(#[case] op_str: &str, #[case] expected: Func) {
         let input = format!("{}(10)", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -297,6 +315,7 @@ mod tests {
     #[case("|", Opcode::BitwiseOr)]
     #[case("<", Opcode::LessThan)]
     #[case(">", Opcode::GreaterThan)]
+    /// TODO: Document this function.
     fn test_is_left_associative(#[case] op_str: &str, #[case] expected: Opcode) {
         let input = format!("1 {} 2 {} 3", op_str, op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -320,6 +339,7 @@ mod tests {
 
     #[rstest]
     #[case("**", Opcode::Power)]
+    /// TODO: Document this function.
     fn test_is_right_associative(#[case] op_str: &str, #[case] expected: Opcode) {
         let input = format!("1 {} 2 {} 3", op_str, op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -348,6 +368,7 @@ mod tests {
     #[case("+", Opcode::Plus)]
     #[case("-", Opcode::Minus)]
     #[case("~", Opcode::BitwiseNot)]
+    /// TODO: Document this function.
     fn test_degrees_and_unary_three(#[case] op_str: &str, #[case] other: Opcode) {
         let input = format!("{}1°", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -372,6 +393,7 @@ mod tests {
     #[case("+", Opcode::Plus)]
     #[case("-", Opcode::Minus)]
     #[case("~", Opcode::BitwiseNot)]
+    /// TODO: Document this function.
     fn test_power_and_unary_three_right(#[case] op_str: &str, #[case] other: Opcode) {
         let input = format!("1**{}2", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -397,6 +419,7 @@ mod tests {
     #[case("+", Opcode::Plus)]
     #[case("-", Opcode::Minus)]
     #[case("~", Opcode::BitwiseNot)]
+    /// TODO: Document this function.
     fn test_power_and_unary_three_left(#[case] op_str: &str, #[case] other: Opcode) {
         let input = format!("{}1**2", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -418,6 +441,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_unary_three_and_four(
         #[values(("!", Opcode::LogicalNot), ("+", Opcode::Plus), ("-", Opcode::Minus), ("~", Opcode::BitwiseNot))]
         unary_op: (&str, Opcode),
@@ -446,6 +470,7 @@ mod tests {
     #[case("*", Opcode::Multiply)]
     #[case("/", Opcode::Divide)]
     #[case("%", Opcode::Modulo)]
+    /// TODO: Document this function.
     fn test_binary_three_and_four_left(#[case] op_str: &str, #[case] other: Opcode) {
         let input = format!("1**2{}3", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -471,6 +496,7 @@ mod tests {
     #[case("*", Opcode::Multiply)]
     #[case("/", Opcode::Divide)]
     #[case("%", Opcode::Modulo)]
+    /// TODO: Document this function.
     fn test_binary_three_and_four_right(#[case] op_str: &str, #[case] other: Opcode) {
         let input = format!("1{}2**3", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -493,6 +519,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_four_combos(
         #[values(("*", Opcode::Multiply), ("/", Opcode::Divide), ("%", Opcode::Modulo))] left_op: (
             &str,
@@ -524,6 +551,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_four_and_five_left(
         #[values(("*", Opcode::Multiply), ("/", Opcode::Divide), ("%", Opcode::Modulo))] higher_op: (&str, Opcode),
         #[values(("+", Opcode::Plus), ("-", Opcode::Minus))] lower_op: (&str, Opcode),
@@ -549,6 +577,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_four_and_five_right(
         #[values(("*", Opcode::Multiply), ("/", Opcode::Divide), ("%", Opcode::Modulo))] higher_op: (&str, Opcode),
         #[values(("+", Opcode::Plus), ("-", Opcode::Minus))] lower_op: (&str, Opcode),
@@ -574,6 +603,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_five_combos(
         #[values(("+", Opcode::Plus), ("-", Opcode::Minus))] left_op: (&str, Opcode),
         #[values(("+", Opcode::Plus), ("-", Opcode::Minus))] right_op: (&str, Opcode),
@@ -599,6 +629,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_five_and_six_left(
         #[values(("+", Opcode::Plus), ("-", Opcode::Minus))] higher_op: (&str, Opcode),
         #[values(("<<", Opcode::BitshiftLeft), (">>", Opcode::BitshiftRight))] lower_op: (
@@ -627,6 +658,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_five_and_six_right(
         #[values(("+", Opcode::Plus), ("-", Opcode::Minus))] higher_op: (&str, Opcode),
         #[values(("<<", Opcode::BitshiftLeft), (">>", Opcode::BitshiftRight))] lower_op: (
@@ -655,6 +687,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_six_combos(
         #[values(("<<", Opcode::BitshiftLeft), (">>", Opcode::BitshiftRight))] left_op: (
             &str,
@@ -686,6 +719,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_six_and_seven_left(
         #[values(("<<", Opcode::BitshiftLeft), (">>", Opcode::BitshiftRight))] higher_op: (
             &str,
@@ -715,6 +749,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_six_and_seven_right(
         #[values(("<<", Opcode::BitshiftLeft), (">>", Opcode::BitshiftRight))] higher_op: (
             &str,
@@ -744,6 +779,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_seven_combos(
         #[values(("<", Opcode::LessThan), ("<=", Opcode::LessThanEquals), (">", Opcode::GreaterThan), (">=", Opcode::GreaterThanEquals))]
         left_op: (&str, Opcode),
@@ -775,6 +811,7 @@ mod tests {
     #[case("<=", Opcode::LessThanEquals)]
     #[case(">", Opcode::GreaterThan)]
     #[case(">=", Opcode::GreaterThanEquals)]
+    /// TODO: Document this function.
     fn test_binary_seven_and_eight_left(#[case] op_str: &str, #[case] other: Opcode) {
         let input = format!("1{}2&3", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -801,6 +838,7 @@ mod tests {
     #[case("<=", Opcode::LessThanEquals)]
     #[case(">", Opcode::GreaterThan)]
     #[case(">=", Opcode::GreaterThanEquals)]
+    /// TODO: Document this function.
     fn test_binary_seven_and_eight_right(#[case] op_str: &str, #[case] other: Opcode) {
         let input = format!("1&2{}3", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -827,6 +865,7 @@ mod tests {
     #[case("^", Opcode::BitwiseXor, "|", Opcode::BitwiseOr)]
     #[case("|", Opcode::BitwiseOr, "&&", Opcode::LogicalAnd)]
     #[case("&&", Opcode::LogicalAnd, "||", Opcode::LogicalOr)]
+    /// TODO: Document this function.
     fn test_binary_operator_ladder_left(
         #[case] low_op_str: &str,
         #[case] low_opcode: Opcode,
@@ -858,6 +897,7 @@ mod tests {
     #[case("^", Opcode::BitwiseXor, "|", Opcode::BitwiseOr)]
     #[case("|", Opcode::BitwiseOr, "&&", Opcode::LogicalAnd)]
     #[case("&&", Opcode::LogicalAnd, "||", Opcode::LogicalOr)]
+    /// TODO: Document this function.
     fn test_binary_operator_ladder_right(
         #[case] low_op_str: &str,
         #[case] low_opcode: Opcode,
@@ -889,6 +929,7 @@ mod tests {
     #[case("!=", Opcode::NotEquals)]
     #[case("/=", Opcode::NotEquals)]
     #[case("~=", Opcode::ApproximatelyEquals)]
+    /// TODO: Document this function.
     fn test_binary_operators_twelve_left(#[case] op_str: &str, #[case] opcode: Opcode) {
         let input = format!("1{}2||3", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -915,6 +956,7 @@ mod tests {
     #[case("!=", Opcode::NotEquals)]
     #[case("/=", Opcode::NotEquals)]
     #[case("~=", Opcode::ApproximatelyEquals)]
+    /// TODO: Document this function.
     fn test_binary_operators_twelve_right(#[case] op_str: &str, #[case] opcode: Opcode) {
         let input = format!("1||2{}3", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -937,6 +979,7 @@ mod tests {
     }
 
     #[rstest]
+    /// TODO: Document this function.
     fn test_binary_twelve_combos(
         #[values(("==", Opcode::Equals), ("!=", Opcode::NotEquals), ("/=", Opcode::NotEquals), ("~=", Opcode::ApproximatelyEquals))]
         left_op: (&str, Opcode),
@@ -985,6 +1028,7 @@ mod tests {
     #[case("cos", Func::Cos)]
     #[case("sin", Func::Sin)]
     #[case("tan", Func::Tan)]
+    /// TODO: Document this function.
     fn test_parse_function_multivalue(#[case] op_str: &str, #[case] expected: Func) {
         let input = format!("{}(10, 12.1, Test_Name)", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -1027,6 +1071,7 @@ mod tests {
     #[case("cos", Func::Cos)]
     #[case("sin", Func::Sin)]
     #[case("tan", Func::Tan)]
+    /// TODO: Document this function.
     fn test_parse_function_multivalue_trailing_comma(#[case] op_str: &str, #[case] expected: Func) {
         let input = format!("{}(10, 12.1, Test_Name, )", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -1069,6 +1114,7 @@ mod tests {
     #[case("cos", Func::Cos)]
     #[case("sin", Func::Sin)]
     #[case("tan", Func::Tan)]
+    /// TODO: Document this function.
     fn test_parse_function_multiexpression(#[case] op_str: &str, #[case] expected: Func) {
         let input = format!("{}(10 + 12.1)", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -1111,6 +1157,7 @@ mod tests {
     #[case("cos", Func::Cos)]
     #[case("sin", Func::Sin)]
     #[case("tan", Func::Tan)]
+    /// TODO: Document this function.
     fn test_parse_function_multimultiexpression(#[case] op_str: &str, #[case] expected: Func) {
         let input = format!("{}(10 + 12.1, 10 ** Test_Var)", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -1160,6 +1207,7 @@ mod tests {
     #[case("|", Opcode::BitwiseOr)]
     #[case("<", Opcode::LessThan)]
     #[case(">", Opcode::GreaterThan)]
+    /// TODO: Document this function.
     fn test_is_binary_ops_function(#[case] op_str: &str, #[case] expected: Opcode) {
         let input = format!("1 {} cos(1.1)", op_str);
         let lexer = lexer::Lexer::new(&input);
@@ -1187,6 +1235,7 @@ mod tests {
     #[case("+", Opcode::Plus)]
     #[case("-", Opcode::Minus)]
     #[case("~", Opcode::BitwiseNot)]
+    /// TODO: Document this function.
     fn test_unary_operators_with_functions(#[case] op_str: &str, #[case] expected: Opcode) {
         let input = format!("{}cos(1.1)", op_str);
         let lexer = lexer::Lexer::new(&input);
