@@ -10,7 +10,7 @@ extern {
     type Error = LexicalError;
 
     enum Token<'input> {
-        "error" => Token::Error(LexicalError),
+        "error" => Token::Error(<LexicalError>),
         "integer literal" => Token::Integer(<isize>),
         "hex literal" => Token::Hexadecimal(<isize>),
         "float literal" => Token::Float(<f64>),
@@ -315,6 +315,9 @@ pub Term: Box<ast::Expression<'input>> = {
     },
     "(" <Expression> ")",
     FunctionCall,
+    <err:"error"> => {
+        Box::new(ast::Expression::LexicalError(err))
+    },
     ! => { errors.push(<>); Box::new(ast::Expression::Error) },
 }
 

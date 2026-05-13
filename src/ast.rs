@@ -1,3 +1,5 @@
+use crate::tokens::LexicalError;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expression<'input> {
     Bool(bool),
@@ -17,6 +19,7 @@ pub enum Expression<'input> {
         func: Func,
         arguments: Vec<Box<Expression<'input>>>,
     },
+    LexicalError(LexicalError),
     Error,
 }
 
@@ -139,6 +142,21 @@ mod tests {
         let result = parser.parse(&mut errors, lexer);
 
         assert_eq!(result, Ok(Box::new(Expression::Variable("some_name[1]"))));
+    }
+
+    #[test]
+    fn test_parse_lexical_error_token() {
+        let lexer = lexer::Lexer::new("$");
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::LexicalError(
+                LexicalError::UnknownSymbol("$".to_owned())
+            )))
+        );
     }
 
     #[rstest]
