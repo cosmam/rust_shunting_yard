@@ -297,3 +297,16 @@ fn apply_logical_not(val: Value) -> Result<Value, EvalError> {
 fn apply_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
+
+// Some fo the tests here are defensive programming; the AST will not
+// come out with a binary operator in a unary operation. But if that ever 
+// changes in the future, as a whole or for a particular operator, this
+// will result in failing tests, which is what we want
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::*;
+
+    /************ Unary operation tests *************/
+
+}
