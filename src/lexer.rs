@@ -5,7 +5,7 @@ pub type Spanned<Tok, Loc, Error> = Result<(Loc, Tok, Loc), Error>;
 
 pub struct Lexer<'input> {
     // instead of an iterator over characters, we have a token iterator
-    token_stream: SpannedIter<'input, Token>,
+    token_stream: SpannedIter<'input, Token<'input>>,
 }
 
 impl<'input> Lexer<'input> {
@@ -18,7 +18,7 @@ impl<'input> Lexer<'input> {
 }
 
 impl<'input> Iterator for Lexer<'input> {
-    type Item = Spanned<Token, usize, LexicalError>;
+    type Item = Spanned<Token<'input>, usize, LexicalError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.token_stream.next().map(|(token, span)| match token {
@@ -95,10 +95,7 @@ mod tests {
         assert_eq!(lex.span(), 0..1);
         assert_eq!(lex.slice(), "(");
 
-        assert_eq!(
-            lex.next(),
-            Some(Ok(Token::Variable("Some_Name".to_string())))
-        );
+        assert_eq!(lex.next(), Some(Ok(Token::Variable("Some_Name"))));
         assert_eq!(lex.span(), 1..10);
         assert_eq!(lex.slice(), "Some_Name");
 

@@ -25,18 +25,18 @@ impl From<ParseFloatError> for LexicalError {
 }
 
 impl LexicalError {
-    fn from_lexer(lex: &mut logos::Lexer<'_, Token>) -> Self {
+    fn from_lexer<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Self {
         LexicalError::UnknownSymbol(lex.slice().to_string())
     }
 }
 
-fn parse_hex(lex: &mut logos::Lexer<Token>) -> Option<isize> {
+fn parse_hex<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Option<isize> {
     let slice = lex.slice();
     let cleaned = slice.strip_prefix("0x").unwrap_or(slice);
     isize::from_str_radix(cleaned, 16).ok()
 }
 
-fn parse_float(lex: &mut logos::Lexer<Token>) -> Result<f64, LexicalError> {
+fn parse_float<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<f64, LexicalError> {
     let result = lex.slice().parse::<f64>()?;
     match result.classify() {
         FpCategory::Nan => Err(LexicalError::InvalidFloat("NaN".to_owned())),
@@ -49,7 +49,7 @@ fn parse_float(lex: &mut logos::Lexer<Token>) -> Result<f64, LexicalError> {
 #[derive(Logos, Debug, Display, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")]
 #[logos(error(LexicalError, LexicalError::from_lexer))]
-pub enum Token {
+pub enum Token<'source> {
     #[token("(")]
     LeftParen,
 
@@ -194,8 +194,8 @@ pub enum Token {
     #[regex(r"NaN|nan|NAN|NaN32|NaN64", callback = parse_float, priority=5)]
     Float(f64),
 
-    #[regex(r"[_[:alpha:]][_\.\w\d]*(?:\[\d+\])?", |lex| lex.slice().to_owned(), priority=3)]
-    Variable(String),
+    #[regex(r"[_[:alpha:]][_\.\w\d]*(?:\[\d+\])?", |lex| lex.slice(), priority=3)]
+    Variable(&'source str),
 
     Error(LexicalError),
 }

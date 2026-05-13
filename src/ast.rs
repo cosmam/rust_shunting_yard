@@ -1,21 +1,21 @@
 #[derive(Clone, Debug, PartialEq)]
-pub enum Expression {
+pub enum Expression<'input> {
     Bool(bool),
     Integer(isize),
     Float(f64),
-    Variable(String),
+    Variable(&'input str),
     BinaryOperation {
-        lhs: Box<Expression>,
+        lhs: Box<Expression<'input>>,
         operator: Opcode,
-        rhs: Box<Expression>,
+        rhs: Box<Expression<'input>>,
     },
     UnaryOperation {
-        value: Box<Expression>,
+        value: Box<Expression<'input>>,
         operator: Opcode,
     },
     Function {
         func: Func,
-        arguments: Vec<Box<Expression>>,
+        arguments: Vec<Box<Expression<'input>>>,
     },
     Error,
 }
@@ -138,10 +138,7 @@ mod tests {
         let mut errors = Vec::new();
         let result = parser.parse(&mut errors, lexer);
 
-        assert_eq!(
-            result,
-            Ok(Box::new(Expression::Variable("some_name[1]".to_string())))
-        );
+        assert_eq!(result, Ok(Box::new(Expression::Variable("some_name[1]"))));
     }
 
     #[rstest]
@@ -981,7 +978,7 @@ mod tests {
         let values: Vec<Box<Expression>> = vec![
             Box::new(Expression::Integer(10)),
             Box::new(Expression::Float(12.1)),
-            Box::new(Expression::Variable("Test_Name".to_string())),
+            Box::new(Expression::Variable("Test_Name")),
         ];
 
         assert_eq!(
@@ -1023,7 +1020,7 @@ mod tests {
         let values: Vec<Box<Expression>> = vec![
             Box::new(Expression::Integer(10)),
             Box::new(Expression::Float(12.1)),
-            Box::new(Expression::Variable("Test_Name".to_string())),
+            Box::new(Expression::Variable("Test_Name")),
         ];
 
         assert_eq!(
@@ -1113,7 +1110,7 @@ mod tests {
             Box::new(Expression::BinaryOperation {
                 lhs: Box::new(Expression::Integer(10)),
                 operator: Opcode::Power,
-                rhs: Box::new(Expression::Variable("Test_Var".to_string())),
+                rhs: Box::new(Expression::Variable("Test_Var")),
             }),
         ];
 

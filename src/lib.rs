@@ -12,7 +12,7 @@ lalrpop_mod!(
     pub calc
 );
 
-pub fn evaluate(text: &str) -> Result<(), Box<dyn Error>> {
+pub fn evaluate(text: &str) -> Result<(), Box<dyn Error + '_>> {
     let lexer = lexer::Lexer::new(text);
     let parser = calc::ExpressionParser::new();
 

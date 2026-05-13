@@ -3,18 +3,18 @@ use crate::ast;
 
 use lalrpop_util::ErrorRecovery;
 
-grammar<'err>(errors: &'err mut Vec<ErrorRecovery<usize, Token, LexicalError>>);
+grammar<'input, 'err>(errors: &'err mut Vec<ErrorRecovery<usize, Token<'input>, LexicalError>>);
 
 extern {
     type Location = usize;
     type Error = LexicalError;
 
-    enum Token {
+    enum Token<'input> {
         "error" => Token::Error(LexicalError),
         "integer literal" => Token::Integer(<isize>),
         "hex literal" => Token::Hexadecimal(<isize>),
         "float literal" => Token::Float(<f64>),
-        "variable" => Token::Variable(<String>),
+        "variable" => Token::Variable(<&'input str>),
         "==" => Token::Equals,
         "!=" => Token::NotEquals,
         "<=" => Token::LessThanEquals,
@@ -62,7 +62,7 @@ extern {
     }
 }
 
-pub Expression: Box<ast::Expression> = {
+pub Expression: Box<ast::Expression<'input>> = {
     #[precedence(level="1")]
     Term,
 
@@ -291,7 +291,7 @@ FunctionName: ast::Func = {
     "ceiling" => ast::Func::Ceiling,
 };
 
-FunctionCall: Box<ast::Expression> = {
+FunctionCall: Box<ast::Expression<'input>> = {
     <func:FunctionName> "(" <arguments:ExpressionList> ")" => {
         Box::new(ast::Expression::Function {
         func,
@@ -300,7 +300,7 @@ FunctionCall: Box<ast::Expression> = {
     },
 };
 
-pub Term: Box<ast::Expression> = {
+pub Term: Box<ast::Expression<'input>> = {
     <val:"integer literal"> => {
         Box::new(ast::Expression::Integer(val))
     },
