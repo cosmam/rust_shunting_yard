@@ -72,6 +72,12 @@ pub enum Token<'source> {
     #[token("~=")]
     ApproximatelyEquals,
 
+    #[token("<")]
+    LessThan,
+
+    #[token(">")]
+    GreaterThan,
+
     #[token("+")]
     Plus,
 
@@ -86,9 +92,6 @@ pub enum Token<'source> {
 
     #[token("/")]
     Divide,
-
-    #[token("^")]
-    BitwiseXor,
 
     #[token("%")]
     Modulo,
@@ -111,8 +114,26 @@ pub enum Token<'source> {
     #[token("!")]
     LogicalNot,
 
+    #[token("&")]
+    BitwiseAnd,
+
+    #[token("^")]
+    BitwiseXor,
+
     #[token("~")]
     BitwiseNot,
+
+    #[token("|")]
+    BitwiseOr,
+
+    #[token("cos")]
+    Cos,
+
+    #[token("sin")]
+    Sin,
+
+    #[token("tan")]
+    Tan,
 
     #[token("min")]
     Minimum,
@@ -159,27 +180,6 @@ pub enum Token<'source> {
     #[token("ceil")]
     #[token("ceiling")]
     Ceiling,
-
-    #[token("&")]
-    BitwiseAnd,
-
-    #[token("|")]
-    BitwiseOr,
-
-    #[token("cos")]
-    Cos,
-
-    #[token("sin")]
-    Sin,
-
-    #[token("tan")]
-    Tan,
-
-    #[token("<")]
-    LessThan,
-
-    #[token(">")]
-    GreaterThan,
 
     #[token(",")]
     Comma,

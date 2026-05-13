@@ -1,9 +1,10 @@
 use lalrpop_util::lalrpop_mod;
 use std::error::Error;
 
-pub mod ast;
-pub mod lexer;
-pub mod tokens;
+mod ast;
+mod eval;
+mod lexer;
+mod tokens;
 
 lalrpop_mod!(
     #[allow(clippy::all)]
