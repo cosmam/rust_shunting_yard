@@ -1035,5 +1035,164 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case("min", Func::Min)]
+    #[case("max", Func::Max)]
+    #[case("pow", Func::Power)]
+    #[case("mod", Func::Modulo)]
+    #[case("rem", Func::Remainder)]
+    #[case("round", Func::Round)]
+    #[case("acos", Func::ACos)]
+    #[case("asin", Func::ASin)]
+    #[case("atan", Func::ATan)]
+    #[case("abs", Func::Abs)]
+    #[case("ln", Func::Ln)]
+    #[case("log", Func::Log)]
+    #[case("exp", Func::Exp)]
+    #[case("floor", Func::Floor)]
+    #[case("ceil", Func::Ceiling)]
+    #[case("ceiling", Func::Ceiling)]
+    #[case("cos", Func::Cos)]
+    #[case("sin", Func::Sin)]
+    #[case("tan", Func::Tan)]
+    fn test_parse_function_multiexpression(#[case] op_str: &str, #[case] expected: Func) {
+        let input = format!("{}(10 + 12.1)", op_str);
+        let lexer = lexer::Lexer::new(&input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        let values: Vec<Box<Expression>> = vec![Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Integer(10)),
+            operator: Opcode::Plus,
+            rhs: Box::new(Expression::Float(12.1)),
+        })];
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::Function {
+                func: expected,
+                arguments: values,
+            }))
+        );
+    }
+
+    #[rstest]
+    #[case("min", Func::Min)]
+    #[case("max", Func::Max)]
+    #[case("pow", Func::Power)]
+    #[case("mod", Func::Modulo)]
+    #[case("rem", Func::Remainder)]
+    #[case("round", Func::Round)]
+    #[case("acos", Func::ACos)]
+    #[case("asin", Func::ASin)]
+    #[case("atan", Func::ATan)]
+    #[case("abs", Func::Abs)]
+    #[case("ln", Func::Ln)]
+    #[case("log", Func::Log)]
+    #[case("exp", Func::Exp)]
+    #[case("floor", Func::Floor)]
+    #[case("ceil", Func::Ceiling)]
+    #[case("ceiling", Func::Ceiling)]
+    #[case("cos", Func::Cos)]
+    #[case("sin", Func::Sin)]
+    #[case("tan", Func::Tan)]
+    fn test_parse_function_multimultiexpression(#[case] op_str: &str, #[case] expected: Func) {
+        let input = format!("{}(10 + 12.1, 10 ** Test_Var)", op_str);
+        let lexer = lexer::Lexer::new(&input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        let values: Vec<Box<Expression>> = vec![
+            Box::new(Expression::BinaryOperation {
+                lhs: Box::new(Expression::Integer(10)),
+                operator: Opcode::Plus,
+                rhs: Box::new(Expression::Float(12.1)),
+            }),
+            Box::new(Expression::BinaryOperation {
+                lhs: Box::new(Expression::Integer(10)),
+                operator: Opcode::Power,
+                rhs: Box::new(Expression::Variable("Test_Var".to_string())),
+            }),
+        ];
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::Function {
+                func: expected,
+                arguments: values,
+            }))
+        );
+    }
+
+    #[rstest]
+    #[case("==", Opcode::Equals)]
+    #[case("!=", Opcode::NotEquals)]
+    #[case("/=", Opcode::NotEquals)]
+    #[case("<=", Opcode::LessThanEquals)]
+    #[case(">=", Opcode::GreaterThanEquals)]
+    #[case("~=", Opcode::ApproximatelyEquals)]
+    #[case("*", Opcode::Multiply)]
+    #[case("/", Opcode::Divide)]
+    #[case("+", Opcode::Plus)]
+    #[case("-", Opcode::Minus)]
+    #[case("%", Opcode::Modulo)]
+    #[case("&&", Opcode::LogicalAnd)]
+    #[case("||", Opcode::LogicalOr)]
+    #[case("<<", Opcode::BitshiftLeft)]
+    #[case(">>", Opcode::BitshiftRight)]
+    #[case("&", Opcode::BitwiseAnd)]
+    #[case("|", Opcode::BitwiseOr)]
+    #[case("<", Opcode::LessThan)]
+    #[case(">", Opcode::GreaterThan)]
+    fn test_is_binary_ops_function(#[case] op_str: &str, #[case] expected: Opcode) {
+        let input = format!("1 {} cos(1.1)", op_str);
+        let lexer = lexer::Lexer::new(&input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        let values: Vec<Box<Expression>> = vec![Box::new(Expression::Float(1.1))];
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::BinaryOperation {
+                lhs: Box::new(Expression::Integer(1)),
+                operator: expected,
+                rhs: Box::new(Expression::Function {
+                    func: Func::Cos,
+                    arguments: values,
+                }),
+            }))
+        );
+    }
+
+    #[rstest]
+    #[case("!", Opcode::LogicalNot)]
+    #[case("+", Opcode::Plus)]
+    #[case("-", Opcode::Minus)]
+    #[case("~", Opcode::BitwiseNot)]
+    fn test_unary_operators_with_functions(#[case] op_str: &str, #[case] expected: Opcode) {
+        let input = format!("{}cos(1.1)", op_str);
+        let lexer = lexer::Lexer::new(&input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        let values: Vec<Box<Expression>> = vec![Box::new(Expression::Float(1.1))];
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::UnaryOperation {
+                operator: expected,
+                value: Box::new(Expression::Function {
+                    func: Func::Cos,
+                    arguments: values,
+                }),
+            }))
+        );
+    }
+
     // error conditions
 }
