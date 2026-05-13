@@ -62,13 +62,13 @@ pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Val
 
         Expression::UnaryOperation { operator, value } => {
             let value = eval(value, variables)?;
-            apply_unary(operator, value, variables)
+            apply_unary(operator, value)
         }
 
         Expression::BinaryOperation { lhs, operator, rhs } => {
             let left = eval(lhs, variables)?;
             let right = eval(rhs, variables)?;
-            apply_binary(operator, left, right, variables)
+            apply_binary(operator, left, right)
         }
 
         Expression::Function { func, arguments } => {
@@ -101,17 +101,11 @@ pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Val
 /// - `op`: TODO: Document the operator being applied.
 /// - `lhs`: TODO: Document the left-hand value.
 /// - `rhs`: TODO: Document the right-hand value.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document invalid arity and operand errors.
-fn apply_binary(
-    op: &Opcode,
-    lhs: Value,
-    rhs: Value,
-    variables: &HashMap<String, Value>,
-) -> Result<Value, EvalError> {
+fn apply_binary(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     match op {
         Opcode::Equals
         | Opcode::NotEquals
@@ -119,22 +113,18 @@ fn apply_binary(
         | Opcode::GreaterThan
         | Opcode::GreaterThanEquals
         | Opcode::LessThanEquals
-        | Opcode::ApproximatelyEquals => apply_binary_comparison(op, lhs, rhs, variables),
+        | Opcode::ApproximatelyEquals => apply_binary_comparison(op, lhs, rhs),
         Opcode::Power
         | Opcode::Multiply
         | Opcode::Divide
         | Opcode::Plus
         | Opcode::Minus
-        | Opcode::Modulo => apply_binary_arithmatic(op, lhs, rhs, variables),
+        | Opcode::Modulo => apply_binary_arithmatic(op, lhs, rhs),
         Opcode::BitwiseAnd | Opcode::BitwiseOr | Opcode::BitwiseXor => {
-            apply_binary_bit_operation(op, lhs, rhs, variables)
+            apply_binary_bit_operation(op, lhs, rhs)
         }
-        Opcode::BitshiftLeft | Opcode::BitshiftRight => {
-            apply_bitshift_operation(op, lhs, rhs, variables)
-        }
-        Opcode::LogicalAnd | Opcode::LogicalOr => {
-            apply_binary_bit_operation(op, lhs, rhs, variables)
-        }
+        Opcode::BitshiftLeft | Opcode::BitshiftRight => apply_bitshift_operation(op, lhs, rhs),
+        Opcode::LogicalAnd | Opcode::LogicalOr => apply_binary_bit_operation(op, lhs, rhs),
         Opcode::Degrees | Opcode::BitwiseNot | Opcode::LogicalNot => Err(EvalError::InvalidArity),
     }
 }
@@ -146,17 +136,11 @@ fn apply_binary(
 /// - `op`: TODO: Document supported comparison operators.
 /// - `lhs`: TODO: Document the left-hand value.
 /// - `rhs`: TODO: Document the right-hand value.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document comparison-specific error cases.
-fn apply_binary_comparison(
-    op: &Opcode,
-    lhs: Value,
-    rhs: Value,
-    variables: &HashMap<String, Value>,
-) -> Result<Value, EvalError> {
+fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
@@ -167,17 +151,11 @@ fn apply_binary_comparison(
 /// - `op`: TODO: Document supported arithmetic operators.
 /// - `lhs`: TODO: Document the left-hand value.
 /// - `rhs`: TODO: Document the right-hand value.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document arithmetic-specific error cases.
-fn apply_binary_arithmatic(
-    op: &Opcode,
-    lhs: Value,
-    rhs: Value,
-    variables: &HashMap<String, Value>,
-) -> Result<Value, EvalError> {
+fn apply_binary_arithmatic(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
@@ -188,17 +166,11 @@ fn apply_binary_arithmatic(
 /// - `op`: TODO: Document supported bitwise operators.
 /// - `lhs`: TODO: Document the left-hand value.
 /// - `rhs`: TODO: Document the right-hand value.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document bitwise-specific error cases.
-fn apply_binary_bit_operation(
-    op: &Opcode,
-    lhs: Value,
-    rhs: Value,
-    variables: &HashMap<String, Value>,
-) -> Result<Value, EvalError> {
+fn apply_binary_bit_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
@@ -209,17 +181,11 @@ fn apply_binary_bit_operation(
 /// - `op`: TODO: Document supported bitshift operators.
 /// - `lhs`: TODO: Document the value being shifted.
 /// - `rhs`: TODO: Document the shift amount.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document bitshift-specific error cases.
-fn apply_bitshift_operation(
-    op: &Opcode,
-    lhs: Value,
-    rhs: Value,
-    variables: &HashMap<String, Value>,
-) -> Result<Value, EvalError> {
+fn apply_bitshift_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
@@ -230,17 +196,11 @@ fn apply_bitshift_operation(
 /// - `op`: TODO: Document supported logical operators.
 /// - `lhs`: TODO: Document the left-hand value.
 /// - `rhs`: TODO: Document the right-hand value.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document logical-operation error cases.
-fn apply_binary_logical_operation(
-    op: &Opcode,
-    lhs: Value,
-    rhs: Value,
-    variables: &HashMap<String, Value>,
-) -> Result<Value, EvalError> {
+fn apply_binary_logical_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
@@ -252,22 +212,15 @@ fn apply_binary_logical_operation(
 ///
 /// - `op`: TODO: Document the operator being applied.
 /// - `val`: TODO: Document the operand value.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document invalid arity and operand errors.
-fn apply_unary(
-    op: &Opcode,
-    val: Value,
-    variables: &HashMap<String, Value>,
-) -> Result<Value, EvalError> {
+fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
     match op {
-        Opcode::Degrees | Opcode::Plus | Opcode::Minus | Opcode::Modulo => {
-            apply_unary_arithmatic(op, val, variables)
-        }
-        Opcode::BitwiseNot => apply_bitwise_not(val, variables),
-        Opcode::LogicalNot => apply_logical_not(val, variables),
+        Opcode::Degrees | Opcode::Plus | Opcode::Minus => apply_unary_arithmatic(op, val),
+        Opcode::BitwiseNot => apply_bitwise_not(val),
+        Opcode::LogicalNot => apply_logical_not(val),
         Opcode::Equals
         | Opcode::NotEquals
         | Opcode::LessThan
@@ -295,16 +248,11 @@ fn apply_unary(
 ///
 /// - `op`: TODO: Document supported unary arithmetic operators.
 /// - `val`: TODO: Document the operand value.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document unary arithmetic error cases.
-fn apply_unary_arithmatic(
-    op: &Opcode,
-    val: Value,
-    variables: &HashMap<String, Value>,
-) -> Result<Value, EvalError> {
+fn apply_unary_arithmatic(op: &Opcode, val: Value) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
@@ -313,12 +261,11 @@ fn apply_unary_arithmatic(
 /// # Parameters
 ///
 /// - `val`: TODO: Document the operand value.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document bitwise-negation error cases.
-fn apply_bitwise_not(val: Value, variables: &HashMap<String, Value>) -> Result<Value, EvalError> {
+fn apply_bitwise_not(val: Value) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
@@ -327,12 +274,11 @@ fn apply_bitwise_not(val: Value, variables: &HashMap<String, Value>) -> Result<V
 /// # Parameters
 ///
 /// - `val`: TODO: Document the operand value.
-/// - `variables`: TODO: Document whether variable bindings are needed here.
 ///
 /// # Errors
 ///
 /// TODO: Document logical-negation error cases.
-fn apply_logical_not(val: Value, variables: &HashMap<String, Value>) -> Result<Value, EvalError> {
+fn apply_logical_not(val: Value) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
