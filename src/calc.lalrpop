@@ -295,7 +295,7 @@ FunctionCall: Box<ast::Expression<'input>> = {
     <func:FunctionName> "(" <arguments:ExpressionList> ")" => {
         Box::new(ast::Expression::Function {
         func,
-        arguments
+        arguments: arguments.into_iter().map(|arg| *arg).collect()
         })
     },
 };

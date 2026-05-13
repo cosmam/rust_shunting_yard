@@ -17,7 +17,7 @@ pub enum Expression<'input> {
     },
     Function {
         func: Func,
-        arguments: Vec<Box<Expression<'input>>>,
+        arguments: Vec<Expression<'input>>,
     },
     LexicalError(LexicalError),
     Error,
@@ -265,7 +265,7 @@ mod tests {
         let mut errors = Vec::new();
         let result = parser.parse(&mut errors, lexer);
 
-        let values: Vec<Box<Expression>> = vec![Box::new(Expression::Integer(10))];
+        let values: Vec<Expression> = vec![Expression::Integer(10)];
 
         assert_eq!(
             result,
@@ -993,10 +993,10 @@ mod tests {
         let mut errors = Vec::new();
         let result = parser.parse(&mut errors, lexer);
 
-        let values: Vec<Box<Expression>> = vec![
-            Box::new(Expression::Integer(10)),
-            Box::new(Expression::Float(12.1)),
-            Box::new(Expression::Variable("Test_Name")),
+        let values: Vec<Expression> = vec![
+            Expression::Integer(10),
+            Expression::Float(12.1),
+            Expression::Variable("Test_Name"),
         ];
 
         assert_eq!(
@@ -1035,10 +1035,10 @@ mod tests {
         let mut errors = Vec::new();
         let result = parser.parse(&mut errors, lexer);
 
-        let values: Vec<Box<Expression>> = vec![
-            Box::new(Expression::Integer(10)),
-            Box::new(Expression::Float(12.1)),
-            Box::new(Expression::Variable("Test_Name")),
+        let values: Vec<Expression> = vec![
+            Expression::Integer(10),
+            Expression::Float(12.1),
+            Expression::Variable("Test_Name"),
         ];
 
         assert_eq!(
@@ -1077,11 +1077,11 @@ mod tests {
         let mut errors = Vec::new();
         let result = parser.parse(&mut errors, lexer);
 
-        let values: Vec<Box<Expression>> = vec![Box::new(Expression::BinaryOperation {
+        let values: Vec<Expression> = vec![Expression::BinaryOperation {
             lhs: Box::new(Expression::Integer(10)),
             operator: Opcode::Plus,
             rhs: Box::new(Expression::Float(12.1)),
-        })];
+        }];
 
         assert_eq!(
             result,
@@ -1119,17 +1119,17 @@ mod tests {
         let mut errors = Vec::new();
         let result = parser.parse(&mut errors, lexer);
 
-        let values: Vec<Box<Expression>> = vec![
-            Box::new(Expression::BinaryOperation {
+        let values: Vec<Expression> = vec![
+            Expression::BinaryOperation {
                 lhs: Box::new(Expression::Integer(10)),
                 operator: Opcode::Plus,
                 rhs: Box::new(Expression::Float(12.1)),
-            }),
-            Box::new(Expression::BinaryOperation {
+            },
+            Expression::BinaryOperation {
                 lhs: Box::new(Expression::Integer(10)),
                 operator: Opcode::Power,
                 rhs: Box::new(Expression::Variable("Test_Var")),
-            }),
+            },
         ];
 
         assert_eq!(
@@ -1168,7 +1168,7 @@ mod tests {
         let mut errors = Vec::new();
         let result = parser.parse(&mut errors, lexer);
 
-        let values: Vec<Box<Expression>> = vec![Box::new(Expression::Float(1.1))];
+        let values: Vec<Expression> = vec![Expression::Float(1.1)];
 
         assert_eq!(
             result,
@@ -1195,7 +1195,7 @@ mod tests {
         let mut errors = Vec::new();
         let result = parser.parse(&mut errors, lexer);
 
-        let values: Vec<Box<Expression>> = vec![Box::new(Expression::Float(1.1))];
+        let values: Vec<Expression> = vec![Expression::Float(1.1)];
 
         assert_eq!(
             result,
