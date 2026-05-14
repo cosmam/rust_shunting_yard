@@ -11,6 +11,7 @@ extern {
 
     enum Token<'input> {
         "error" => Token::Error(<LexicalError>),
+        "boolean" => Token::Bool(<bool>),
         "integer literal" => Token::Integer(<i64>),
         "hex literal" => Token::Hexadecimal(<i64>),
         "float literal" => Token::Float(<f64>),
@@ -301,6 +302,9 @@ FunctionCall: Box<ast::Expression<'input>> = {
 };
 
 pub Term: Box<ast::Expression<'input>> = {
+    <val:"boolean"> => {
+        Box::new(ast::Expression::Bool(val))
+    },
     <val:"integer literal"> => {
         Box::new(ast::Expression::Integer(val))
     },

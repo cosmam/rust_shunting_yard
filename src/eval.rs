@@ -13,33 +13,8 @@
 //! referenced variable is missing, or an operator is used with the wrong arity.
 
 use crate::ast::{Expression, Func, Opcode};
+use crate::{EvalError, Value};
 use std::collections::HashMap;
-
-/// Runtime value produced by expression evaluation.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Value {
-    /// Boolean value.
-    Bool(bool),
-    /// Signed integer value.
-    Integer(i64),
-    /// Floating-point value.
-    Float(f64),
-}
-
-/// Error returned when expression evaluation fails.
-#[derive(Clone, Debug, PartialEq)]
-pub enum EvalError {
-    /// An operator or function was used with an unsupported number of operands.
-    InvalidArity,
-    /// The expression tree contains an error node or lexical error node.
-    InvalidExpression,
-    /// An invalid type was passed to a calculation
-    InvalidType(String),
-    /// An opcode was found that was already supposed to be filtered out
-    UnexpectedOpcode,
-    /// A variable reference could not be found in the provided bindings.
-    UnknownVariable(String),
-}
 
 /// Evaluate an expression into a runtime value.
 ///

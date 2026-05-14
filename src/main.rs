@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::io::{self, Write};
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let variables: HashMap<String, shunting_yard::Value> = HashMap::new();
+
     loop {
         let mut input = String::new();
 
@@ -19,7 +22,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             break;
         }
 
-        let _ = shunting_yard::evaluate(&input).map_err(|e| eprintln!("Detailed log: {:?}", e));
+        let _ = shunting_yard::evaluate(&input, &variables)
+            .map_err(|e| eprintln!("Detailed log: {:?}", e));
     }
 
     Ok(())

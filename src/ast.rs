@@ -6,11 +6,11 @@
 //! represent literals, variables, or parser/lexer errors, while compound nodes
 //! record the parsed operator or function and the child expressions it applies
 //! to.
-//! 
+//!
 //! Lexer errors are forwarded to the parser and become part of the AST. Parsing
 //! errors are likewise captured, such that the resulting AST can at a minimum
 //! represent the valid parts.
-//! 
+//!
 //! NOTE: A valid AST does not guarantee a successful evaluation
 
 use crate::tokens::LexicalError;
@@ -179,6 +179,16 @@ mod tests {
         let result = parser.parse(&mut errors, lexer);
 
         assert_eq!(result, Ok(Box::new(Expression::Float(expected))));
+    }
+
+    #[test]
+    fn test_parse_bool() {
+        let lexer = lexer::Lexer::new("false");
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        assert_eq!(result, Ok(Box::new(Expression::Bool(false))));
     }
 
     #[test]

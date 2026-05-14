@@ -59,7 +59,23 @@ mod tests {
     use rstest::*;
 
     #[test]
-    /// TODO: Document this function.
+    fn test_bool_parens() {
+        let mut lex = Token::lexer("(true)");
+
+        assert_eq!(lex.next(), Some(Ok(Token::LeftParen)));
+        assert_eq!(lex.span(), 0..1);
+        assert_eq!(lex.slice(), "(");
+
+        assert_eq!(lex.next(), Some(Ok(Token::Bool(true))));
+        assert_eq!(lex.span(), 1..5);
+        assert_eq!(lex.slice(), "true");
+
+        assert_eq!(lex.next(), Some(Ok(Token::RightParen)));
+        assert_eq!(lex.span(), 5..6);
+        assert_eq!(lex.slice(), ")");
+    }
+
+    #[test]
     fn test_integer_parens() {
         let mut lex = Token::lexer("(123)");
 
@@ -77,7 +93,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_hexadecimal_parens() {
         let mut lex = Token::lexer("(0x1f)");
 
@@ -95,7 +110,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_double_parens() {
         let mut lex = Token::lexer("(12.3)");
 
@@ -113,7 +127,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_variable_parens() {
         let mut lex = Token::lexer("(Some_Name)");
 
@@ -131,7 +144,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_is_equals() {
         let mut lex = Token::lexer("23== 14");
 
@@ -149,7 +161,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_not_equals1() {
         let mut lex = Token::lexer("23 != 14");
 
@@ -167,7 +178,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_not_equals2() {
         let mut lex = Token::lexer("23 /= 14");
 
@@ -185,7 +195,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_less_than_equals() {
         let mut lex = Token::lexer("23 <= 14");
 
@@ -203,7 +212,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_greater_than_equals() {
         let mut lex = Token::lexer("23 >= 14");
 
@@ -221,7 +229,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_approximately_equals() {
         let mut lex = Token::lexer("23 ~= 14");
 
@@ -239,7 +246,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_plus() {
         let mut lex = Token::lexer("23+14");
 
@@ -257,7 +263,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_minus() {
         let mut lex = Token::lexer("23-14");
 
@@ -275,7 +280,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_multiply() {
         let mut lex = Token::lexer("23* 14");
 
@@ -293,7 +297,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_divide() {
         let mut lex = Token::lexer("23 /14");
 
@@ -311,7 +314,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_exponentiation() {
         let mut lex = Token::lexer("23 ** 14");
 
@@ -329,7 +331,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_bitwise_xor() {
         let mut lex = Token::lexer("23 ^ 14");
 
@@ -347,7 +348,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_modulus() {
         let mut lex = Token::lexer("23% 14");
 
@@ -365,7 +365,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_logical_and() {
         let mut lex = Token::lexer("23 &&14");
 
@@ -383,7 +382,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_logical_or() {
         let mut lex = Token::lexer("23 ||14");
 
@@ -401,7 +399,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_bitshift_left() {
         let mut lex = Token::lexer("23   <<14");
 
@@ -419,7 +416,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_bitshift_right() {
         let mut lex = Token::lexer("23  >>    14");
 
@@ -437,7 +433,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_degrees() {
         let mut lex = Token::lexer("23°");
 
@@ -451,7 +446,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_min() {
         let mut lex = Token::lexer("min(12, 13, 14 )");
 
@@ -489,7 +483,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_max() {
         let mut lex = Token::lexer("max(12, 13, 14 )");
 
@@ -527,7 +520,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_pow() {
         let mut lex = Token::lexer("pow(12, 14 )");
 
@@ -557,7 +549,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_mod() {
         let mut lex = Token::lexer("mod(12, 14 )");
 
@@ -587,7 +578,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_rem() {
         let mut lex = Token::lexer("rem(12, 14 )");
 
@@ -617,7 +607,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_round() {
         let mut lex = Token::lexer("round(12, 14 )");
 
@@ -647,7 +636,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_acos() {
         let mut lex = Token::lexer("acos(12, 14 )");
 
@@ -677,7 +665,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_asin() {
         let mut lex = Token::lexer("asin(12, 14)");
 
@@ -707,7 +694,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_atan() {
         let mut lex = Token::lexer("atan(12, 14 )");
 
@@ -737,7 +723,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_cos() {
         let mut lex = Token::lexer("cos(12, 14 )");
 
@@ -767,7 +752,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_sin() {
         let mut lex = Token::lexer("sin(12, 14 )");
 
@@ -797,7 +781,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_tan() {
         let mut lex = Token::lexer("tan(12, 14 )");
 
@@ -827,7 +810,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_abs() {
         let mut lex = Token::lexer("abs(12, 14 )");
 
@@ -857,7 +839,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_log() {
         let mut lex = Token::lexer("log(12, 14 )");
 
@@ -887,7 +868,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_exp() {
         let mut lex = Token::lexer("exp(12, 14 )");
 
@@ -917,7 +897,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_floor() {
         let mut lex = Token::lexer("floor(12, 14 )");
 
@@ -947,7 +926,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_ceil() {
         let mut lex = Token::lexer("ceil(12, 14 )");
 
@@ -977,7 +955,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_ceiling() {
         let mut lex = Token::lexer("ceiling(12, 14 )");
 
@@ -1007,7 +984,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_ln() {
         let mut lex = Token::lexer("ln(12, 14 )");
 
@@ -1037,7 +1013,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_less_than() {
         let mut lex = Token::lexer("23  <    14");
 
@@ -1055,7 +1030,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_bitwise_or() {
         let mut lex = Token::lexer("23  |    14");
 
@@ -1073,7 +1047,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_bitwise_and() {
         let mut lex = Token::lexer("23  &    14");
 
@@ -1091,7 +1064,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_logical_not() {
         let mut lex = Token::lexer("!23");
 
@@ -1105,7 +1077,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_bitwise_not() {
         let mut lex = Token::lexer("~23");
 
@@ -1119,7 +1090,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_new_bitwise_not() {
         let mut lex = Lexer::new("~23");
 
@@ -1128,7 +1098,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_new_lexing_error_unknown_symbol() {
         let mut lex = Lexer::new("~23$");
 
@@ -1145,7 +1114,23 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
+    fn test_new_lexing_error_parse_bool() {
+        let mut lex = Lexer::new("~True");
+
+        assert_eq!(lex.next(), Some(Ok((0, Token::BitwiseNot, 1))));
+        assert_eq!(
+            lex.next(),
+            Some(Ok((
+                1,
+                Token::Error(LexicalError::InvalidBool(
+                    "provided string was not `true` or `false`".to_owned()
+                )),
+                5
+            )))
+        );
+    }
+
+    #[test]
     fn test_new_lexing_error_parse_int() {
         let mut lex = Lexer::new("~12345678901234567890");
 
@@ -1163,7 +1148,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_new_lexing_error_parse_float_infinite() {
         let mut lex = Lexer::new("~12.1e320");
 
@@ -1179,7 +1163,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_new_lexing_error_parse_float_subnormal() {
         let mut lex = Lexer::new("~12.1e-320");
 
@@ -1195,7 +1178,6 @@ mod tests {
     }
 
     #[test]
-    /// TODO: Document this function.
     fn test_new_lexing_error_parse_float_nan() {
         let mut lex = Lexer::new("~NAN");
 
@@ -1232,7 +1214,6 @@ mod tests {
     #[case(".4E2", 40.0)]
     #[case(".4E+2", 40.0)]
     #[case(".4E-2", 0.004)]
-    /// TODO: Document this function.
     fn test_parse_floats(#[case] input: &str, #[case] expected: f64) {
         let mut lex = Token::lexer(input);
 
