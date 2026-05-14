@@ -33,6 +33,8 @@ pub enum EvalError {
     InvalidExpression,
     /// An invalid type was passed to a calculation
     InvalidType(String),
+    /// There is some math error, such as division by zero
+    MathError(String),
     /// The parser ran into an error it couldn't recover from
     ParserError,
     /// An opcode was found that was already supposed to be filtered out

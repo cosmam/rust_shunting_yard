@@ -97,7 +97,7 @@ fn apply_binary(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError>
         | Opcode::Divide
         | Opcode::Plus
         | Opcode::Minus
-        | Opcode::Modulo => apply_binary_arithmatic(op, lhs, rhs),
+        | Opcode::Modulo => apply_binary_math_operation(op, lhs, rhs),
         Opcode::BitwiseAnd | Opcode::BitwiseOr | Opcode::BitwiseXor => {
             apply_binary_bit_operation(op, lhs, rhs)
         }
@@ -133,8 +133,76 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
 /// # Errors
 ///
 /// TODO: Document arithmetic-specific error cases.
-fn apply_binary_arithmatic(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+fn apply_binary_math_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match convert_binary_math_values(op, lhs, rhs) {
+        (Opcode::Equals, _, _)
+        | (Opcode::NotEquals, _, _)
+        | (Opcode::LessThanEquals, _, _)
+        | (Opcode::GreaterThanEquals, _, _)
+        | (Opcode::ApproximatelyEquals, _, _)
+        | (Opcode::LessThan, _, _)
+        | (Opcode::GreaterThan, _, _)
+        | (Opcode::BitshiftLeft, _, _)
+        | (Opcode::BitshiftRight, _, _)
+        | (Opcode::LogicalAnd, _, _)
+        | (Opcode::LogicalOr, _, _)
+        | (Opcode::LogicalNot, _, _)
+        | (Opcode::BitwiseNot, _, _)
+        | (Opcode::BitwiseAnd, _, _)
+        | (Opcode::BitwiseOr, _, _)
+        | (Opcode::BitwiseXor, _, _)
+        | (Opcode::Degrees, _, _) => Err(EvalError::UnexpectedOpcode),
+        (Opcode::Power, Value::Integer(l), Value::Integer(r)) => {
+            let result: Result<u32, _> = r.try_into();
+            match result {
+                Ok(val) => match l.checked_pow(val) {
+                    Some(v) => Ok(Value::Integer(v)),
+                    None => Err(EvalError::MathError(
+                        "Integer overflow on power".to_string(),
+                    )),
+                },
+                Err(_) => Err(EvalError::MathError(
+                    "Integer exponent too large".to_string(),
+                )),
+            }
+        }
+        (Opcode::Divide, Value::Integer(l), Value::Integer(r)) => match r {
+            0 => Err(EvalError::MathError("Division by zero".to_string())),
+            _ => Ok(Value::Integer(l / r)),
+        },
+        (Opcode::Modulo, Value::Integer(l), Value::Integer(r)) => match r {
+            0 => Err(EvalError::MathError("Modulo by zero".to_string())),
+            _ => Ok(Value::Integer(l % r)),
+        },
+        (Opcode::Multiply, Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l * r)),
+        (Opcode::Plus, Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l + r)),
+        (Opcode::Minus, Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l - r)),
+        (Opcode::Power, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.powf(r))),
+        (Opcode::Divide, Value::Float(l), Value::Float(r)) => match r {
+            0.0 => Err(EvalError::MathError("Division by zero".to_string())),
+            _ => Ok(Value::Float(l / r)),
+        },
+        (Opcode::Modulo, Value::Float(l), Value::Float(r)) => match r {
+            0.0 => Err(EvalError::MathError("Modulo by zero".to_string())),
+            _ => Ok(Value::Float(l % r)),
+        },
+        (Opcode::Multiply, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l * r)),
+        (Opcode::Plus, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l + r)),
+        (Opcode::Minus, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l - r)),
+        // we already ensured there's no mixture of int and float, and handled other operators,
+        // so the only other option is that one of the values is a bool
+        _ => Err(EvalError::InvalidType(
+            "Bools not supported for binary math".to_string(),
+        )),
+    }
+}
+
+fn convert_binary_math_values(op: &Opcode, lhs: Value, rhs: Value) -> (&Opcode, Value, Value) {
+    match (lhs.clone(), rhs.clone()) {
+        (Value::Integer(i), Value::Float(f)) => (op, Value::Float(i as f64), Value::Float(f)),
+        (Value::Float(f), Value::Integer(i)) => (op, Value::Float(f), Value::Float(i as f64)),
+        _ => (op, lhs, rhs),
+    }
 }
 
 /// Apply a binary bitwise operator.
@@ -258,7 +326,7 @@ fn apply_binary_logical_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result
 /// Errors from the selected unary helper are returned unchanged.
 fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
     match op {
-        Opcode::Degrees | Opcode::Plus | Opcode::Minus => apply_unary_arithmatic(op, val),
+        Opcode::Degrees | Opcode::Plus | Opcode::Minus => apply_unary_math(op, val),
         Opcode::BitwiseNot => apply_bitwise_not(val),
         Opcode::LogicalNot => apply_logical_not(val),
         Opcode::Equals
@@ -293,10 +361,10 @@ fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
 /// Returns [`EvalError::InvalidType`] for boolean operands. Returns
 /// [`EvalError::UnexpectedOpcode`] for any opcode other than unary plus, unary
 /// minus, or degrees.
-fn apply_unary_arithmatic(op: &Opcode, val: Value) -> Result<Value, EvalError> {
+fn apply_unary_math(op: &Opcode, val: Value) -> Result<Value, EvalError> {
     match (op, val.clone()) {
         (_, Value::Bool(_)) => Err(EvalError::InvalidType(
-            "Unary arithmatic operations not defined for bool".to_string(),
+            "Unary math operations not defined for bool".to_string(),
         )),
         (Opcode::Plus, _) => Ok(val),
         (Opcode::Minus, Value::Integer(i)) => Ok(Value::Integer(-i)),
@@ -455,7 +523,7 @@ mod tests {
     #[case(Opcode::Degrees)]
     #[case(Opcode::Plus)]
     #[case(Opcode::Minus)]
-    fn test_unary_arithmatic_bool(#[case] op: Opcode) {
+    fn test_unary_math_bool(#[case] op: Opcode) {
         let variables: HashMap<String, Value> = HashMap::new();
         let expr = Box::new(Expression::UnaryOperation {
             operator: op,
@@ -467,7 +535,7 @@ mod tests {
         assert_eq!(
             result,
             Err(EvalError::InvalidType(
-                "Unary arithmatic operations not defined for bool".to_string(),
+                "Unary math operations not defined for bool".to_string(),
             ))
         );
     }
@@ -493,8 +561,8 @@ mod tests {
     #[case(Opcode::BitwiseAnd)]
     #[case(Opcode::BitwiseOr)]
     #[case(Opcode::BitwiseXor)]
-    fn test_unary_arithmatic_invalid_opcode(#[case] op: Opcode) {
-        let result = apply_unary_arithmatic(&op, Value::Integer(1));
+    fn test_unary_math_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_unary_math(&op, Value::Integer(1));
 
         assert_eq!(result, Err(EvalError::UnexpectedOpcode));
     }
@@ -787,6 +855,32 @@ mod tests {
     }
 
     #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_bitshift_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_bitshift_operation(&op, Value::Integer(1), Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
     #[case(Opcode::BitwiseAnd, true, true, true)]
     #[case(Opcode::BitwiseAnd, true, false, false)]
     #[case(Opcode::BitwiseAnd, false, false, false)]
@@ -849,7 +943,7 @@ mod tests {
     #[case(Expression::Integer(1), Expression::Float(1.0))]
     #[case(Expression::Float(1.0), Expression::Integer(1))]
     #[case(Expression::Float(1.0), Expression::Float(1.0))]
-    fn test_apply_binary_bitshift_operation_invalid_float(
+    fn test_apply_binary_bit_operation_invalid_float(
         #[case] lhs: Expression,
         #[case] rhs: Expression,
     ) {
@@ -873,7 +967,7 @@ mod tests {
     #[rstest]
     #[case(Expression::Integer(1), Expression::Bool(true))]
     #[case(Expression::Bool(true), Expression::Integer(1))]
-    fn test_apply_binary_bitshift_operation_invalid_mixed_types(
+    fn test_apply_binary_bit_operation_invalid_mixed_types(
         #[case] lhs: Expression,
         #[case] rhs: Expression,
     ) {
@@ -895,55 +989,76 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Opcode::Equals)]
-    #[case(Opcode::NotEquals)]
-    #[case(Opcode::LessThanEquals)]
-    #[case(Opcode::GreaterThanEquals)]
-    #[case(Opcode::ApproximatelyEquals)]
-    #[case(Opcode::LessThan)]
-    #[case(Opcode::GreaterThan)]
-    #[case(Opcode::Power)]
-    #[case(Opcode::Multiply)]
-    #[case(Opcode::Divide)]
-    #[case(Opcode::Plus)]
-    #[case(Opcode::Minus)]
-    #[case(Opcode::Modulo)]
-    #[case(Opcode::LogicalNot)]
-    #[case(Opcode::BitwiseNot)]
-    #[case(Opcode::BitwiseAnd)]
-    #[case(Opcode::BitwiseOr)]
-    #[case(Opcode::BitwiseXor)]
-    #[case(Opcode::Degrees)]
-    fn test_apply_binary_bitshift_operation_invalid_opcode(#[case] op: Opcode) {
-        let result = apply_bitshift_operation(&op, Value::Integer(1), Value::Integer(1));
+    #[case(Opcode::Plus, Expression::Integer(10), Expression::Integer(4), Value::Integer(14))]
+    #[case(Opcode::Plus, Expression::Integer(10), Expression::Float(0.4), Value::Float(10.4))]
+    #[case(Opcode::Plus, Expression::Float(1.0), Expression::Integer(4), Value::Float(5.0))]
+    #[case(Opcode::Plus, Expression::Float(1.0), Expression::Float(0.4), Value::Float(1.4))]
+    fn test_apply_binary_math_regular(
+        #[case] op: Opcode,
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: op,
+            rhs: Box::new(rhs),
+        });
 
-        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Bool(true))]
+    #[case(Expression::Float(1.0), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    #[case(Expression::Bool(true), Expression::Float(1.0))]
+    fn test_apply_binary_math_operation_invalid_typoes(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::Multiply,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not supported for binary math".to_string()
+            ))
+        );
     }
 
     #[rstest]
     #[case(Opcode::Equals)]
-    #[case(Opcode::NotEquals)]
-    #[case(Opcode::LessThanEquals)]
-    #[case(Opcode::GreaterThanEquals)]
-    #[case(Opcode::ApproximatelyEquals)]
-    #[case(Opcode::LessThan)]
-    #[case(Opcode::GreaterThan)]
-    #[case(Opcode::Power)]
-    #[case(Opcode::Multiply)]
-    #[case(Opcode::Divide)]
-    #[case(Opcode::Plus)]
-    #[case(Opcode::Minus)]
-    #[case(Opcode::Modulo)]
-    #[case(Opcode::BitshiftLeft)]
-    #[case(Opcode::BitshiftRight)]
-    #[case(Opcode::LogicalAnd)]
-    #[case(Opcode::LogicalOr)]
-    #[case(Opcode::LogicalNot)]
-    #[case(Opcode::BitwiseNot)]
-    #[case(Opcode::Degrees)]
-    fn test_apply_binary_bit_operation_invalid_opcode(#[case] op: Opcode) {
-        let result = apply_binary_bit_operation(&op, Value::Integer(1), Value::Integer(1));
+	#[case(Opcode::NotEquals)]
+	#[case(Opcode::LessThanEquals)]
+	#[case(Opcode::GreaterThanEquals)]
+	#[case(Opcode::ApproximatelyEquals)]
+	#[case(Opcode::LessThan)]
+	#[case(Opcode::GreaterThan)]
+	#[case(Opcode::BitshiftLeft)]
+	#[case(Opcode::BitshiftRight)]
+	#[case(Opcode::LogicalAnd)]
+	#[case(Opcode::LogicalOr)]
+	#[case(Opcode::LogicalNot)]
+	#[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+	#[case(Opcode::Degrees)]
+    fn test_apply_binary_math_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_math_operation(&op, Value::Integer(1), Value::Integer(1));
 
         assert_eq!(result, Err(EvalError::UnexpectedOpcode));
     }
+
 }
