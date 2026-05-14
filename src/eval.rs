@@ -989,6 +989,33 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_bit_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_bit_operation(&op, Value::Integer(1), Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
     #[rustfmt::skip]
     #[rstest]
     #[case(Opcode::Plus, Expression::Integer(10), Expression::Integer(4), Value::Integer(14))]
@@ -1031,6 +1058,88 @@ mod tests {
         let result = eval(&expr, &variables);
 
         assert_eq!(result, Ok(expected));
+    }
+
+    #[test]
+    fn test_apply_binary_math_integer_exponent() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Integer(10)),
+            operator: Opcode::Power,
+            rhs: Box::new(Expression::Integer(5_000_000_000)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer exponent too large".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_binary_math_integer_overflow() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Integer(1_000_000_000)),
+            operator: Opcode::Power,
+            rhs: Box::new(Expression::Integer(1_000_000_000)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on power".to_string()
+            ))
+        );
+    }
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Expression::Integer(10), Expression::Integer(0))]
+    #[case(Expression::Float(10.0), Expression::Integer(0))]
+    #[case(Expression::Integer(10), Expression::Float(0.0))]
+    #[case(Expression::Float(10.0), Expression::Float(0.0))]
+    fn test_apply_binary_math_divide_error(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::Divide,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::MathError("Division by zero".to_string())));
+    }
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Expression::Integer(10), Expression::Integer(0))]
+    #[case(Expression::Float(10.0), Expression::Integer(0))]
+    #[case(Expression::Integer(10), Expression::Float(0.0))]
+    #[case(Expression::Float(10.0), Expression::Float(0.0))]
+    fn test_apply_binary_math_modulo_error(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode:: Modulo,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::MathError("Modulo by zero".to_string())));
     }
 
     #[rstest]
