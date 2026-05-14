@@ -175,7 +175,52 @@ fn apply_binary_arithmatic(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
 ///
 /// TODO: Document bitwise-specific error cases.
 fn apply_binary_bit_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    match (op, lhs, rhs) {
+        (Opcode::Equals, _, _)
+        | (Opcode::NotEquals, _, _)
+        | (Opcode::LessThanEquals, _, _)
+        | (Opcode::GreaterThanEquals, _, _)
+        | (Opcode::ApproximatelyEquals, _, _)
+        | (Opcode::LessThan, _, _)
+        | (Opcode::GreaterThan, _, _)
+        | (Opcode::Power, _, _)
+        | (Opcode::Multiply, _, _)
+        | (Opcode::Divide, _, _)
+        | (Opcode::Plus, _, _)
+        | (Opcode::Minus, _, _)
+        | (Opcode::Modulo, _, _)
+        | (Opcode::BitshiftLeft, _, _)
+        | (Opcode::BitshiftRight, _, _)
+        | (Opcode::LogicalAnd, _, _)
+        | (Opcode::LogicalOr, _, _)
+        | (Opcode::LogicalNot, _, _)
+        | (Opcode::BitwiseNot, _, _)
+        | (Opcode::Degrees, _, _) => Err(EvalError::UnexpectedOpcode),
+        (_, Value::Float(_), _) | (_, _, Value::Float(_)) => Err(EvalError::InvalidType(
+            "Bitwise operations on floats not supported".to_string(),
+        )),
+        (Opcode::BitwiseAnd, Value::Bool(b_lhs), Value::Bool(b_rhs)) => {
+            Ok(Value::Bool(b_lhs & b_rhs))
+        }
+        (Opcode::BitwiseOr, Value::Bool(b_lhs), Value::Bool(b_rhs)) => {
+            Ok(Value::Bool(b_lhs | b_rhs))
+        }
+        (Opcode::BitwiseXor, Value::Bool(b_lhs), Value::Bool(b_rhs)) => {
+            Ok(Value::Bool(b_lhs ^ b_rhs))
+        }
+        (Opcode::BitwiseAnd, Value::Integer(i_lhs), Value::Integer(i_rhs)) => {
+            Ok(Value::Integer(i_lhs & i_rhs))
+        }
+        (Opcode::BitwiseOr, Value::Integer(i_lhs), Value::Integer(i_rhs)) => {
+            Ok(Value::Integer(i_lhs | i_rhs))
+        }
+        (Opcode::BitwiseXor, Value::Integer(i_lhs), Value::Integer(i_rhs)) => {
+            Ok(Value::Integer(i_lhs ^ i_rhs))
+        }
+        (Opcode::BitwiseAnd, _, _) | (Opcode::BitwiseOr, _, _) | (Opcode::BitwiseXor, _, _) => Err(
+            EvalError::InvalidType("Cannot mix types for bitwise operations".to_string()),
+        ),
+    }
 }
 
 /// Apply a bitshift operator.
@@ -773,6 +818,114 @@ mod tests {
     }
 
     #[rstest]
+    #[case(Opcode::BitwiseAnd, true, true, true)]
+    #[case(Opcode::BitwiseAnd, true, false, false)]
+    #[case(Opcode::BitwiseAnd, false, false, false)]
+    #[case(Opcode::BitwiseOr, true, true, true)]
+    #[case(Opcode::BitwiseOr, true, false, true)]
+    #[case(Opcode::BitwiseOr, false, false, false)]
+    #[case(Opcode::BitwiseXor, true, true, false)]
+    #[case(Opcode::BitwiseXor, true, false, true)]
+    #[case(Opcode::BitwiseXor, false, false, false)]
+    fn test_binary_bit_operations_bool(
+        #[case] op: Opcode,
+        #[case] lhs: bool,
+        #[case] rhs: bool,
+        #[case] expected: bool,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(lhs)),
+            operator: op,
+            rhs: Box::new(Expression::Bool(rhs)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Bool(expected)));
+    }
+
+    #[rstest]
+    #[case(Opcode::BitwiseAnd, 54, 19, 18)]
+    #[case(Opcode::BitwiseAnd, 54, 145, 16)]
+    #[case(Opcode::BitwiseAnd, 108, 19, 0)]
+    #[case(Opcode::BitwiseAnd, 108, 145, 0)]
+    #[case(Opcode::BitwiseOr, 54, 19, 55)]
+    #[case(Opcode::BitwiseOr, 54, 145, 183)]
+    #[case(Opcode::BitwiseOr, 108, 19, 127)]
+    #[case(Opcode::BitwiseOr, 108, 145, 253)]
+    #[case(Opcode::BitwiseXor, 54, 19, 37)]
+    #[case(Opcode::BitwiseXor, 54, 145, 167)]
+    #[case(Opcode::BitwiseXor, 108, 19, 127)]
+    #[case(Opcode::BitwiseXor, 108, 145, 253)]
+    fn test_binary_bit_operations_int(
+        #[case] op: Opcode,
+        #[case] lhs: i64,
+        #[case] rhs: i64,
+        #[case] expected: i64,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Integer(lhs)),
+            operator: op,
+            rhs: Box::new(Expression::Integer(rhs)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(expected)));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Float(1.0))]
+    #[case(Expression::Float(1.0), Expression::Integer(1))]
+    #[case(Expression::Float(1.0), Expression::Float(1.0))]
+    fn test_apply_binary_bitshift_operation_invalid_float(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::BitwiseAnd,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bitwise operations on floats not supported".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    fn test_apply_binary_bitshift_operation_invalid_mixed_types(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::BitwiseAnd,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Cannot mix types for bitwise operations".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
     #[case(Opcode::Equals)]
     #[case(Opcode::NotEquals)]
     #[case(Opcode::LessThanEquals)]
@@ -794,6 +947,33 @@ mod tests {
     #[case(Opcode::Degrees)]
     fn test_apply_binary_bitshift_operation_invalid_opcode(#[case] op: Opcode) {
         let result = apply_bitshift_operation(&op, Value::Integer(1), Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_bit_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_bit_operation(&op, Value::Integer(1), Value::Integer(1));
 
         assert_eq!(result, Err(EvalError::UnexpectedOpcode));
     }
