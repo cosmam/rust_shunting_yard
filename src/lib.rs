@@ -10,7 +10,7 @@ lalrpop_mod!(
     #[allow(clippy::all)]
     #[allow(clippy::pedantic)]
     #[allow(dead_code)]
-    pub calc
+    calc
 );
 
 pub fn evaluate(text: &str) -> Result<(), Box<dyn Error + '_>> {
