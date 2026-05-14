@@ -988,11 +988,32 @@ mod tests {
         );
     }
 
+    #[rustfmt::skip]
     #[rstest]
     #[case(Opcode::Plus, Expression::Integer(10), Expression::Integer(4), Value::Integer(14))]
     #[case(Opcode::Plus, Expression::Integer(10), Expression::Float(0.4), Value::Float(10.4))]
     #[case(Opcode::Plus, Expression::Float(1.0), Expression::Integer(4), Value::Float(5.0))]
     #[case(Opcode::Plus, Expression::Float(1.0), Expression::Float(0.4), Value::Float(1.4))]
+    #[case(Opcode::Minus, Expression::Integer(10), Expression::Integer(4), Value::Integer(6))]
+    #[case(Opcode::Minus, Expression::Integer(10), Expression::Float(0.5), Value::Float(9.5))]
+    #[case(Opcode::Minus, Expression::Float(10.5), Expression::Integer(4), Value::Float(6.5))]
+    #[case(Opcode::Minus, Expression::Float(10.5), Expression::Float(0.5), Value::Float(10.0))]
+    #[case(Opcode::Multiply, Expression::Integer(10), Expression::Integer(4), Value::Integer(40))]
+    #[case(Opcode::Multiply, Expression::Integer(10), Expression::Float(0.5), Value::Float(5.0))]
+    #[case(Opcode::Multiply, Expression::Float(10.5), Expression::Integer(4), Value::Float(42.0))]
+    #[case(Opcode::Multiply, Expression::Float(10.5), Expression::Float(0.5), Value::Float(5.25))]
+    #[case(Opcode::Divide, Expression::Integer(12), Expression::Integer(3), Value::Integer(4))]
+    #[case(Opcode::Divide, Expression::Integer(12), Expression::Float(3.0), Value::Float(4.0))]
+    #[case(Opcode::Divide, Expression::Float(12.0), Expression::Integer(3), Value::Float(4.0))]
+    #[case(Opcode::Divide, Expression::Float(12.0), Expression::Float(3.0), Value::Float(4.0))]
+    #[case(Opcode::Modulo, Expression::Integer(13), Expression::Integer(5), Value::Integer(3))]
+    #[case(Opcode::Modulo, Expression::Integer(13), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Opcode::Modulo, Expression::Float(13.0), Expression::Integer(5), Value::Float(3.0))]
+    #[case(Opcode::Modulo, Expression::Float(13.0), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Opcode::Power, Expression::Integer(2), Expression::Integer(3), Value::Integer(8))]
+    #[case(Opcode::Power, Expression::Integer(2), Expression::Float(3.0), Value::Float(8.0))]
+    #[case(Opcode::Power, Expression::Float(2.0), Expression::Integer(3), Value::Float(8.0))]
+    #[case(Opcode::Power, Expression::Float(2.0), Expression::Float(3.0), Value::Float(8.0))]
     fn test_apply_binary_math_regular(
         #[case] op: Opcode,
         #[case] lhs: Expression,
@@ -1039,26 +1060,25 @@ mod tests {
 
     #[rstest]
     #[case(Opcode::Equals)]
-	#[case(Opcode::NotEquals)]
-	#[case(Opcode::LessThanEquals)]
-	#[case(Opcode::GreaterThanEquals)]
-	#[case(Opcode::ApproximatelyEquals)]
-	#[case(Opcode::LessThan)]
-	#[case(Opcode::GreaterThan)]
-	#[case(Opcode::BitshiftLeft)]
-	#[case(Opcode::BitshiftRight)]
-	#[case(Opcode::LogicalAnd)]
-	#[case(Opcode::LogicalOr)]
-	#[case(Opcode::LogicalNot)]
-	#[case(Opcode::BitwiseNot)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
     #[case(Opcode::BitwiseAnd)]
     #[case(Opcode::BitwiseOr)]
     #[case(Opcode::BitwiseXor)]
-	#[case(Opcode::Degrees)]
+    #[case(Opcode::Degrees)]
     fn test_apply_binary_math_operation_invalid_opcode(#[case] op: Opcode) {
         let result = apply_binary_math_operation(&op, Value::Integer(1), Value::Integer(1));
 
         assert_eq!(result, Err(EvalError::UnexpectedOpcode));
     }
-
 }
