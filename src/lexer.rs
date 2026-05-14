@@ -2,22 +2,31 @@
 //!
 //! # Overview
 //!
-//! TODO: Describe how source text is converted into spanned parser tokens.
+//! This module wraps the Logos token stream in the `Result<(start, token, end),
+//! error>` shape expected by the LALRPOP parser. Logos lexical errors are kept
+//! in-band as [`Token::Error`] values so parser recovery can include them in
+//! the parsed expression tree.
+//!
+//! NaN values will be parsed as float, but will result in a LexicalError;
+//! the tokenization assumes floats are valid
 
 use crate::tokens::{LexicalError, Token};
 use logos::{Logos, SpannedIter}; // your Token enum, as above
 
-/// TODO: Document this type alias.
+/// Parser token item with byte offsets and a lexical error type.
 pub type Spanned<Tok, Loc, Error> = Result<(Loc, Tok, Loc), Error>;
 
-/// TODO: Document this struct.
+/// Iterator over spanned parser tokens borrowed from an input string.
 pub struct Lexer<'input> {
     // instead of an iterator over characters, we have a token iterator
     token_stream: SpannedIter<'input, Token<'input>>,
 }
 
 impl<'input> Lexer<'input> {
-    /// TODO: Document this function.
+    /// Create a lexer over `input`.
+    ///
+    /// Whitespace is skipped by the [`Token`] grammar. Each yielded item reports
+    /// the token and its byte span in the original input.
     pub fn new(input: &'input str) -> Self {
         // the Token::lexer() method is provided by the Logos trait
         Self {
@@ -29,12 +38,15 @@ impl<'input> Lexer<'input> {
 impl<'input> Iterator for Lexer<'input> {
     type Item = Spanned<Token<'input>, usize, LexicalError>;
 
-    /// TODO: Document this function.
+    /// Return the next token with its byte span.
+    ///
+    /// Logos errors are converted into [`Token::Error`] tokens and still
+    /// returned as `Ok` items, allowing the parser to recover and represent
+    /// lexical failures in the AST.
     fn next(&mut self) -> Option<Self::Item> {
         self.token_stream.next().map(|(token, span)| match token {
             Ok(token) => Ok((span.start, token, span.end)),
             Err(err) => Ok((span.start, Token::Error(err), span.end)),
-            // or specify your lexical error to parse error
         })
     }
 }

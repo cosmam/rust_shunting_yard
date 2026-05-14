@@ -2,82 +2,141 @@
 //!
 //! # Overview
 //!
-//! TODO: Describe how parsed expressions, operators, and functions are represented.
+//! The parser produces [`Expression`] trees from the token stream. Leaf nodes
+//! represent literals, variables, or parser/lexer errors, while compound nodes
+//! record the parsed operator or function and the child expressions it applies
+//! to.
+//! 
+//! Lexer errors are forwarded to the parser and become part of the AST. Parsing
+//! errors are likewise captured, such that the resulting AST can at a minimum
+//! represent the valid parts.
+//! 
+//! NOTE: A valid AST does not guarantee a successful evaluation
 
 use crate::tokens::LexicalError;
 
-/// TODO: Document this enum.
+/// Parsed expression node.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expression<'input> {
+    /// Boolean literal.
     Bool(bool),
+    /// Signed integer literal, including hexadecimal literals after conversion.
     Integer(i64),
+    /// Floating-point literal.
     Float(f64),
+    /// Variable reference borrowed from the original input text.
     Variable(&'input str),
+    /// Binary operator expression with a left operand, operator, and right operand.
     BinaryOperation {
         lhs: Box<Expression<'input>>,
         operator: Opcode,
         rhs: Box<Expression<'input>>,
     },
+    /// Unary operator expression with one operand.
     UnaryOperation {
         value: Box<Expression<'input>>,
         operator: Opcode,
     },
+    /// Built-in function call with parsed argument expressions.
     Function {
         func: Func,
         arguments: Vec<Expression<'input>>,
     },
+    /// Lexer error preserved as an expression so parsing can recover.
     LexicalError(LexicalError),
+    /// Parser recovery placeholder for a syntactically invalid expression.
     Error,
 }
 
-/// TODO: Document this enum.
+/// Operator parsed from infix, prefix, or postfix syntax.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Opcode {
+    /// Equality comparison, parsed from `==`.
     Equals,
+    /// Inequality comparison, parsed from `!=` or `/=`.
     NotEquals,
+    /// Less-than-or-equal comparison, parsed from `<=`.
     LessThanEquals,
+    /// Greater-than-or-equal comparison, parsed from `>=`.
     GreaterThanEquals,
+    /// Approximate-equality comparison, parsed from `~=`.
     ApproximatelyEquals,
+    /// Less-than comparison, parsed from `<`.
     LessThan,
+    /// Greater-than comparison, parsed from `>`.
     GreaterThan,
+    /// Exponentiation, parsed from `**`
     Power,
+    /// Multiplication, parsed from `*`.
     Multiply,
+    /// Division, parsed from `/`.
     Divide,
+    /// Addition or unary plus, parsed from `+`.
     Plus,
+    /// Subtraction or unary negation, parsed from `-`.
     Minus,
+    /// Modulo, parsed from `%`
     Modulo,
+    /// Left bitshift, parsed from `<<`.
     BitshiftLeft,
+    /// Right bitshift, parsed from `>>`.
     BitshiftRight,
+    /// Boolean and, parsed from `&&`.
     LogicalAnd,
+    /// Boolean or, parsed from `||`.
     LogicalOr,
+    /// Boolean not, parsed from prefix `!`.
     LogicalNot,
+    /// Bitwise not, parsed from prefix `~`.
     BitwiseNot,
+    /// Bitwise and, parsed from `&`.
     BitwiseAnd,
+    /// Bitwise or, parsed from `|`.
     BitwiseOr,
+    /// Bitwise xor, parsed from `^`.
     BitwiseXor,
+    /// Postfix degree-to-radian conversion, parsed from `°`.
     Degrees,
 }
 
-/// TODO: Document this enum.
+/// Built-in function name parsed from a function call.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Func {
+    /// `min(...)`.
     Min,
+    /// `max(...)`.
     Max,
+    /// `pow(...)`.
     Power,
+    /// `mod(...)`.
     Modulo,
+    /// `rem(...)`.
     Remainder,
+    /// `round(...)`.
     Round,
+    /// `cos(...)`.
     Cos,
+    /// `sin(...)`.
     Sin,
+    /// `tan(...)`.
     Tan,
+    /// `acos(...)`.
     ACos,
+    /// `asin(...)`.
     ASin,
+    /// `atan(...)`.
     ATan,
+    /// `abs(...)`.
     Abs,
+    /// `ln(...)`.
     Ln,
+    /// `log(...)`.
     Log,
+    /// `exp(...)`.
     Exp,
+    /// `floor(...)`.
     Floor,
+    /// `ceil(...)` or `ceiling(...)`.
     Ceiling,
 }
 

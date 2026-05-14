@@ -2,52 +2,64 @@
 //!
 //! # Overview
 //!
-//! TODO: Describe the token grammar and lexical error handling.
+//! [`Token`] defines the Logos lexer grammar for calculator expressions:
+//! punctuation, operators, built-in function names, numeric literals, variable
+//! names, and lexical error tokens. [`LexicalError`] records invalid numeric
+//! conversions and unknown input that Logos cannot classify as a valid token.
 
 use logos::Logos;
 use logos_display::{Debug, Display};
-use std::fmt; // to implement the Display trait later
+use std::fmt;
 use std::num::{FpCategory, ParseFloatError, ParseIntError};
 
-/// TODO: Document this enum.
+/// Error produced while converting source text into tokens.
 #[derive(Default, Debug, Clone, PartialEq)]
 pub enum LexicalError {
+    /// An integer literal could not be parsed as an `i64`.
     InvalidInteger(String),
+    /// A floating-point literal could not be parsed as a finite normal or zero `f64`.
     InvalidFloat(String),
+    /// Source text did not match any token pattern.
     UnknownSymbol(String),
+    /// Generic Logos error fallback.
     #[default]
     InvalidToken,
 }
 
 impl From<ParseIntError> for LexicalError {
-    /// TODO: Document this function.
+    /// Convert an integer parse failure into a lexical integer error.
     fn from(err: ParseIntError) -> Self {
         LexicalError::InvalidInteger(err.to_string())
     }
 }
 
 impl From<ParseFloatError> for LexicalError {
-    /// TODO: Document this function.
+    /// Convert a floating-point parse failure into a lexical float error.
     fn from(err: ParseFloatError) -> Self {
         LexicalError::InvalidFloat(err.to_string())
     }
 }
 
 impl LexicalError {
-    /// TODO: Document this function.
+    /// Build an unknown-symbol error from the current lexer slice.
     fn from_lexer<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Self {
         LexicalError::UnknownSymbol(lex.slice().to_string())
     }
 }
 
-/// TODO: Document this function.
+/// Parse the current `0x...` lexer slice as a hexadecimal `i64`.
 fn parse_hex<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Option<i64> {
     let slice = lex.slice();
     let cleaned = slice.strip_prefix("0x").unwrap_or(slice);
     i64::from_str_radix(cleaned, 16).ok()
 }
 
-/// TODO: Document this function.
+/// Parse the current lexer slice as a finite, non-subnormal `f64`.
+///
+/// # Errors
+///
+/// Returns [`LexicalError::InvalidFloat`] when Rust cannot parse the slice or
+/// when the parsed value is NaN, infinite, or subnormal.
 fn parse_float<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<f64, LexicalError> {
     let result = lex.slice().parse::<f64>()?;
     match result.classify() {
@@ -58,163 +70,212 @@ fn parse_float<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<f64, Lexical
     }
 }
 
-/// TODO: Document this enum.
+/// Lexical token recognized from calculator source text.
 #[derive(Logos, Debug, Display, PartialEq, Clone)]
 #[logos(skip r"[ \t\n\f]+")]
 #[logos(error(LexicalError, LexicalError::from_lexer))]
 pub enum Token<'source> {
+    /// `(`.
     #[token("(")]
     LeftParen,
 
+    /// `)`.
     #[token(")")]
     RightParen,
 
+    /// `==`.
     #[token("==")]
     Equals,
 
+    /// `!=` or `/=`.
     #[token("!=")]
     #[token("/=")]
     NotEquals,
 
+    /// `<=`.
     #[token("<=")]
     LessThanEquals,
 
+    /// `>=`.
     #[token(">=")]
     GreaterThanEquals,
 
+    /// `~=`.
     #[token("~=")]
     ApproximatelyEquals,
 
+    /// `<`.
     #[token("<")]
     LessThan,
 
+    /// `>`.
     #[token(">")]
     GreaterThan,
 
+    /// `+`.
     #[token("+")]
     Plus,
 
+    /// `-`.
     #[token("-")]
     Minus,
 
+    /// `**`.
     #[token("**")]
     Exponentiation,
 
+    /// `*`.
     #[token("*")]
     Multiply,
 
+    /// `/`.
     #[token("/")]
     Divide,
 
+    /// `%`.
     #[token("%")]
     Modulo,
 
+    /// `&&`.
     #[token("&&")]
     LogicalAnd,
 
+    /// `||`.
     #[token("||")]
     LogicalOr,
 
+    /// `<<`.
     #[token("<<")]
     BitshiftLeft,
 
+    /// `>>`.
     #[token(">>")]
     BitshiftRight,
 
+    /// `°`.
     #[token("°")]
     Degrees,
 
+    /// `!`.
     #[token("!")]
     LogicalNot,
 
+    /// `&`.
     #[token("&")]
     BitwiseAnd,
 
+    /// `^`.
     #[token("^")]
     BitwiseXor,
 
+    /// `~`.
     #[token("~")]
     BitwiseNot,
 
+    /// `|`.
     #[token("|")]
     BitwiseOr,
 
+    /// `cos`.
     #[token("cos")]
     Cos,
 
+    /// `sin`.
     #[token("sin")]
     Sin,
 
+    /// `tan`.
     #[token("tan")]
     Tan,
 
+    /// `min`.
     #[token("min")]
     Minimum,
 
+    /// `max`.
     #[token("max")]
     Maximum,
 
+    /// `pow`.
     #[token("pow")]
     Power,
 
+    /// `mod`.
     #[token("mod")]
     Mod,
 
+    /// `rem`.
     #[token("rem")]
     Remainder,
 
+    /// `round`.
     #[token("round")]
     Round,
 
+    /// `acos`.
     #[token("acos")]
     ACos,
 
+    /// `asin`.
     #[token("asin")]
     ASin,
 
+    /// `atan`.
     #[token("atan")]
     ATan,
 
+    /// `abs`.
     #[token("abs")]
     AbsoluteValue,
 
+    /// `ln`.
     #[token("ln")]
     NaturalLog,
 
+    /// `log`.
     #[token("log")]
     Log,
 
+    /// `exp`.
     #[token("exp")]
     Euler,
 
+    /// `floor`.
     #[token("floor")]
     Floor,
 
+    /// `ceil` or `ceiling`.
     #[token("ceil")]
     #[token("ceiling")]
     Ceiling,
 
+    /// `,`.
     #[token(",")]
     Comma,
 
+    /// Decimal integer literal parsed as `i64`.
     #[regex("[0-9]+", |lex| lex.slice().parse::<i64>())]
     Integer(i64),
 
+    /// Hexadecimal integer literal with a `0x` prefix parsed as `i64`.
     #[regex(r"0x[[:xdigit:]]+", callback = parse_hex)]
     Hexadecimal(i64),
 
+    /// Floating-point literal parsed as `f64`.
     #[regex(r"(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+|[0-9]+)(?:[eE][-+]?[0-9]+)|(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)", callback = parse_float)]
     #[regex(r"NaN|nan|NAN|NaN32|NaN64", callback = parse_float, priority=5)]
     Float(f64),
 
+    /// Variable name, optionally including one numeric index suffix.
     #[regex(r"[_[:alpha:]][_\.\w\d]*(?:\[\d+\])?", |lex| lex.slice(), priority=3)]
     Variable(&'source str),
 
+    /// Lexical error token inserted for input that did not match a valid token.
     Error(LexicalError),
 }
 
 impl fmt::Display for LexicalError {
-    /// TODO: Document this function.
+    /// Format the lexical error as a short human-readable message.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LexicalError::InvalidToken => write!(f, "Invalid Token"),

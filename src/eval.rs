@@ -57,7 +57,8 @@ pub enum EvalError {
 /// [`Expression::Error`] or [`Expression::LexicalError`] node.
 ///
 /// Returns [`EvalError::InvalidArity`] when a unary or binary operator is used
-/// in a position where that operator is not supported.
+/// in a position where that operator is not supported. The grammar should prevent
+/// this, so this is mostly a defensive programming decision
 pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Value, EvalError> {
     match expr {
         Expression::Bool(n) => Ok(Value::Bool(*n)),
@@ -100,15 +101,13 @@ pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Val
 
 /// Apply a binary operator to two evaluated values.
 ///
-/// # Parameters
-///
-/// - `op`: TODO: Document the operator being applied.
-/// - `lhs`: TODO: Document the left-hand value.
-/// - `rhs`: TODO: Document the right-hand value.
+/// Dispatches comparison, arithmetic, bitwise, bitshift, and boolean operators
+/// to the helper that implements that operator family.
 ///
 /// # Errors
 ///
-/// TODO: Document invalid arity and operand errors.
+/// Returns [`EvalError::InvalidArity`] when a unary-only opcode is supplied.
+/// Errors from the selected operator-family helper are returned unchanged.
 fn apply_binary(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     match op {
         Opcode::Equals
@@ -165,15 +164,16 @@ fn apply_binary_arithmatic(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
 
 /// Apply a binary bitwise operator.
 ///
-/// # Parameters
-///
-/// - `op`: TODO: Document supported bitwise operators.
-/// - `lhs`: TODO: Document the left-hand value.
-/// - `rhs`: TODO: Document the right-hand value.
+/// Supports bitwise and, or, and xor for pairs of booleans or pairs of signed
+/// integers. Boolean operands use Rust's boolean bit operators, and integer
+/// operands use Rust's integer bit operators.
 ///
 /// # Errors
 ///
-/// TODO: Document bitwise-specific error cases.
+/// Returns [`EvalError::UnexpectedOpcode`] if `op` is not a bitwise binary
+/// opcode, [`EvalError::InvalidType`] for any float operand, and
+/// [`EvalError::InvalidType`] when the operands are otherwise not the same
+/// supported type.
 fn apply_binary_bit_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     match (op, lhs, rhs) {
         (Opcode::Equals, _, _)
@@ -225,15 +225,14 @@ fn apply_binary_bit_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Val
 
 /// Apply a bitshift operator.
 ///
-/// # Parameters
-///
-/// - `op`: TODO: Document supported bitshift operators.
-/// - `lhs`: TODO: Document the value being shifted.
-/// - `rhs`: TODO: Document the shift amount.
+/// Shifts an integer left or right by an integer amount using Rust's `<<` and
+/// `>>` operators.
 ///
 /// # Errors
 ///
-/// TODO: Document bitshift-specific error cases.
+/// Returns [`EvalError::UnexpectedOpcode`] if both operands are integers but
+/// `op` is not a bitshift opcode. Returns [`EvalError::InvalidType`] if either
+/// operand is not an integer.
 fn apply_bitshift_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     if let (Value::Integer(l), Value::Integer(r)) = (lhs, rhs) {
         match op {
@@ -250,15 +249,13 @@ fn apply_bitshift_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value
 
 /// Apply a binary logical operator.
 ///
-/// # Parameters
-///
-/// - `op`: TODO: Document supported logical operators.
-/// - `lhs`: TODO: Document the left-hand value.
-/// - `rhs`: TODO: Document the right-hand value.
+/// Supports boolean `&&` and `||` for pairs of boolean values.
 ///
 /// # Errors
 ///
-/// TODO: Document logical-operation error cases.
+/// Returns [`EvalError::UnexpectedOpcode`] if both operands are booleans but
+/// `op` is not a logical binary opcode. Returns [`EvalError::InvalidType`] if
+/// either operand is not a boolean.
 fn apply_binary_logical_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     if let (Value::Bool(l), Value::Bool(r)) = (lhs, rhs) {
         match op {
@@ -277,14 +274,13 @@ fn apply_binary_logical_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result
 
 /// Apply a unary operator to one evaluated value.
 ///
-/// # Parameters
-///
-/// - `op`: TODO: Document the operator being applied.
-/// - `val`: TODO: Document the operand value.
+/// Dispatches unary plus, minus, degrees, bitwise not, and logical not to the
+/// helper that implements that unary operator family.
 ///
 /// # Errors
 ///
-/// TODO: Document invalid arity and operand errors.
+/// Returns [`EvalError::InvalidArity`] when a binary-only opcode is supplied.
+/// Errors from the selected unary helper are returned unchanged.
 fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
     match op {
         Opcode::Degrees | Opcode::Plus | Opcode::Minus => apply_unary_arithmatic(op, val),
@@ -313,14 +309,15 @@ fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
 
 /// Apply a unary arithmetic operator.
 ///
-/// # Parameters
-///
-/// - `op`: TODO: Document supported unary arithmetic operators.
-/// - `val`: TODO: Document the operand value.
+/// Unary plus returns the operand unchanged, unary minus negates integers and
+/// floats, and degrees converts integer or floating-point degree values into
+/// floating-point radians.
 ///
 /// # Errors
 ///
-/// TODO: Document unary arithmetic error cases.
+/// Returns [`EvalError::InvalidType`] for boolean operands. Returns
+/// [`EvalError::UnexpectedOpcode`] for any opcode other than unary plus, unary
+/// minus, or degrees.
 fn apply_unary_arithmatic(op: &Opcode, val: Value) -> Result<Value, EvalError> {
     match (op, val.clone()) {
         (_, Value::Bool(_)) => Err(EvalError::InvalidType(
@@ -337,13 +334,12 @@ fn apply_unary_arithmatic(op: &Opcode, val: Value) -> Result<Value, EvalError> {
 
 /// Apply bitwise negation to a value.
 ///
-/// # Parameters
-///
-/// - `val`: TODO: Document the operand value.
+/// Boolean values are negated with logical not, since Rust booleans are only
+/// `true` or `false`. Integer values are negated with Rust's bitwise `!`.
 ///
 /// # Errors
 ///
-/// TODO: Document bitwise-negation error cases.
+/// Returns [`EvalError::InvalidType`] for floating-point operands.
 fn apply_bitwise_not(val: Value) -> Result<Value, EvalError> {
     match val {
         // rust guarantees bools are only 0 or 1, so BitwiseNot is the same as LogicalNot
@@ -358,13 +354,11 @@ fn apply_bitwise_not(val: Value) -> Result<Value, EvalError> {
 
 /// Apply logical negation to a value.
 ///
-/// # Parameters
-///
-/// - `val`: TODO: Document the operand value.
+/// Boolean values are negated with Rust's logical `!`.
 ///
 /// # Errors
 ///
-/// TODO: Document logical-negation error cases.
+/// Returns [`EvalError::InvalidType`] for integer and floating-point operands.
 fn apply_logical_not(val: Value) -> Result<Value, EvalError> {
     match val {
         Value::Bool(v) => Ok(Value::Bool(!v)),
@@ -390,7 +384,7 @@ fn apply_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
-// Some fo the tests here are defensive programming; the AST will not
+// Some of the tests here are defensive programming; the AST will not
 // come out with a binary operator in a unary operation. But if that ever
 // changes in the future, as a whole or for a particular operator, this
 // will result in failing tests, which is what we want
