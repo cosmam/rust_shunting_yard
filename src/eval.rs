@@ -21,7 +21,7 @@ pub enum Value {
     /// Boolean value.
     Bool(bool),
     /// Signed integer value.
-    Integer(isize),
+    Integer(i64),
     /// Floating-point value.
     Float(f64),
 }
@@ -33,6 +33,10 @@ pub enum EvalError {
     InvalidArity,
     /// The expression tree contains an error node or lexical error node.
     InvalidExpression,
+    /// An invalid type was passed to a calculation
+    InvalidType(String),
+    /// An opcode was found that was already supposed to be filtered out
+    UnexpectedOpcode,
     /// A variable reference could not be found in the provided bindings.
     UnknownVariable(String),
 }
@@ -124,7 +128,7 @@ fn apply_binary(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError>
             apply_binary_bit_operation(op, lhs, rhs)
         }
         Opcode::BitshiftLeft | Opcode::BitshiftRight => apply_bitshift_operation(op, lhs, rhs),
-        Opcode::LogicalAnd | Opcode::LogicalOr => apply_binary_bit_operation(op, lhs, rhs),
+        Opcode::LogicalAnd | Opcode::LogicalOr => apply_binary_logical_operation(op, lhs, rhs),
         Opcode::Degrees | Opcode::BitwiseNot | Opcode::LogicalNot => Err(EvalError::InvalidArity),
     }
 }
@@ -186,7 +190,17 @@ fn apply_binary_bit_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Val
 ///
 /// TODO: Document bitshift-specific error cases.
 fn apply_bitshift_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    if let (Value::Integer(l), Value::Integer(r)) = (lhs, rhs) {
+        match op {
+            Opcode::BitshiftLeft => Ok(Value::Integer(l << r)),
+            Opcode::BitshiftRight => Ok(Value::Integer(l >> r)),
+            _ => Err(EvalError::UnexpectedOpcode),
+        }
+    } else {
+        Err(EvalError::InvalidType(
+            "Logical operations must operate on bools".to_string(),
+        ))
+    }
 }
 
 /// Apply a binary logical operator.
@@ -201,7 +215,17 @@ fn apply_bitshift_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value
 ///
 /// TODO: Document logical-operation error cases.
 fn apply_binary_logical_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    if let (Value::Bool(l), Value::Bool(r)) = (lhs, rhs) {
+        match op {
+            Opcode::LogicalAnd => Ok(Value::Bool(l && r)),
+            Opcode::LogicalOr => Ok(Value::Bool(l || r)),
+            _ => Err(EvalError::UnexpectedOpcode),
+        }
+    } else {
+        Err(EvalError::InvalidType(
+            "Logical operations must operate on bools".to_string(),
+        ))
+    }
 }
 
 /************** Unary operations **************/
@@ -253,7 +277,17 @@ fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
 ///
 /// TODO: Document unary arithmetic error cases.
 fn apply_unary_arithmatic(op: &Opcode, val: Value) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    match (op, val.clone()) {
+        (_, Value::Bool(_)) => Err(EvalError::InvalidType(
+            "Unary arithmatic operations not defined for bool".to_string(),
+        )),
+        (Opcode::Plus, _) => Ok(val),
+        (Opcode::Minus, Value::Integer(i)) => Ok(Value::Integer(-i)),
+        (Opcode::Minus, Value::Float(f)) => Ok(Value::Float(-f)),
+        (Opcode::Degrees, Value::Integer(i)) => Ok(Value::Float((i as f64).to_radians())),
+        (Opcode::Degrees, Value::Float(f)) => Ok(Value::Float(f.to_radians())),
+        (_, _) => Err(EvalError::UnexpectedOpcode),
+    }
 }
 
 /// Apply bitwise negation to a value.
@@ -266,7 +300,15 @@ fn apply_unary_arithmatic(op: &Opcode, val: Value) -> Result<Value, EvalError> {
 ///
 /// TODO: Document bitwise-negation error cases.
 fn apply_bitwise_not(val: Value) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    match val {
+        // rust guarantees bools are only 0 or 1, so BitwiseNot is the same as LogicalNot
+        Value::Bool(v) => Ok(Value::Bool(!v)),
+        // the '!' operator in rust for ints represents bitwise negation
+        Value::Integer(i) => Ok(Value::Integer(!i)),
+        Value::Float(_) => Err(EvalError::InvalidType(
+            "Bitwise operations not defined for floats".to_string(),
+        )),
+    }
 }
 
 /// Apply logical negation to a value.
@@ -279,7 +321,12 @@ fn apply_bitwise_not(val: Value) -> Result<Value, EvalError> {
 ///
 /// TODO: Document logical-negation error cases.
 fn apply_logical_not(val: Value) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    match val {
+        Value::Bool(v) => Ok(Value::Bool(!v)),
+        Value::Integer(_) | Value::Float(_) => Err(EvalError::InvalidType(
+            "Logical operations must be bools".to_string(),
+        )),
+    }
 }
 
 /************** Functions operations **************/
@@ -299,7 +346,7 @@ fn apply_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
 }
 
 // Some fo the tests here are defensive programming; the AST will not
-// come out with a binary operator in a unary operation. But if that ever 
+// come out with a binary operator in a unary operation. But if that ever
 // changes in the future, as a whole or for a particular operator, this
 // will result in failing tests, which is what we want
 #[cfg(test)]
@@ -307,6 +354,447 @@ mod tests {
     use super::*;
     use rstest::*;
 
+    // in general, we'll test from the public eval function. The exceptions
+    // are redundant/defensive error handling, which we're testing as a way
+    // to catch regressions/changed assumptions
+
     /************ Unary operation tests *************/
 
+    #[test]
+    fn test_logical_not_bool() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::LogicalNot,
+            value: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Bool(false)));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1))]
+    #[case(Expression::Float(1.0))]
+    fn test_logical_not_invalid(#[case] val: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::LogicalNot,
+            value: Box::new(val),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Logical operations must be bools".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_bitwise_not_bool() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::BitwiseNot,
+            value: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_bitwise_not_int() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::BitwiseNot,
+            value: Box::new(Expression::Integer(467)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(-468)));
+    }
+
+    #[test]
+    fn test_bitwise_not_float() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::BitwiseNot,
+            value: Box::new(Expression::Float(1.0)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bitwise operations not defined for floats".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Degrees)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    fn test_unary_arithmatic_bool(#[case] op: Opcode) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: op,
+            value: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Unary arithmatic operations not defined for bool".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    fn test_unary_arithmatic_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_unary_arithmatic(&op, Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[test]
+    fn test_unary_plus_int() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Plus,
+            value: Box::new(Expression::Integer(3)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(3)));
+    }
+
+    #[test]
+    fn test_unary_minus_int() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Minus,
+            value: Box::new(Expression::Integer(3)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(-3)));
+    }
+
+    #[test]
+    fn test_unary_degrees_int() {
+        let v: i64 = 3;
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Degrees,
+            value: Box::new(Expression::Integer(v)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Float((v as f64).to_radians())));
+    }
+
+    #[test]
+    fn test_unary_plus_float() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Plus,
+            value: Box::new(Expression::Float(3.7)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Float(3.7)));
+    }
+
+    #[test]
+    fn test_unary_minus_float() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Minus,
+            value: Box::new(Expression::Float(3.7)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Float(-3.7)));
+    }
+
+    #[test]
+    fn test_unary_degrees_float() {
+        let v: f64 = 52.0;
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Degrees,
+            value: Box::new(Expression::Float(v)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Float(v.to_radians())));
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    fn test_apply_unary_invalid_opcode(#[case] op: Opcode) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: op,
+            value: Box::new(Expression::Integer(1)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
+    }
+
+    #[test]
+    fn test_unary_eval_variable_unknown() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Degrees,
+            value: Box::new(Expression::Variable("Test_Name")),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("Test_Name".to_string()))
+        );
+    }
+
+    /************ Binary operation tests *************/
+
+    #[rstest]
+    #[case(Opcode::LogicalAnd, true, true, true)]
+    #[case(Opcode::LogicalAnd, true, false, false)]
+    #[case(Opcode::LogicalAnd, false, false, false)]
+    #[case(Opcode::LogicalOr, true, true, true)]
+    #[case(Opcode::LogicalOr, true, false, true)]
+    #[case(Opcode::LogicalOr, false, false, false)]
+    fn test_binary_boolean_algebra_valid(
+        #[case] op: Opcode,
+        #[case] lhs: bool,
+        #[case] rhs: bool,
+        #[case] expected: bool,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(lhs)),
+            operator: op,
+            rhs: Box::new(Expression::Bool(rhs)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Bool(expected)));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    #[case(Expression::Integer(1), Expression::Integer(1))]
+    fn test_binary_boolean_algebra_invalid_types(#[case] lhs: Expression, #[case] rhs: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::LogicalOr,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Logical operations must operate on bools".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_logical_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_logical_operation(&op, Value::Bool(true), Value::Bool(true));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[test]
+    fn test_binary_eval_variable_unknown_lhs() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Variable("Test_Name")),
+            operator: Opcode::LogicalOr,
+            rhs: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("Test_Name".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_binary_eval_variable_unknown_rhs() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(true)),
+            operator: Opcode::LogicalOr,
+            rhs: Box::new(Expression::Variable("Test_Name")),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("Test_Name".to_string()))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::BitshiftLeft, 8055371489994718882, 11, 6011609612845125632)]
+    #[case(Opcode::BitshiftLeft, -1821376069820021562, 26, 8453234592348897280)]
+    #[case(Opcode::BitshiftLeft, 3897635188866812215, 28, -2591961689800835072)]
+    #[case(Opcode::BitshiftLeft, -7693944058662696389, 7, -7147403602218902144)]
+    #[case(Opcode::BitshiftRight, 7629495294638887680, 11, 3725339499335394)]
+    #[case(Opcode::BitshiftRight, -5773960239512220022, 26, -86038712256)]
+    #[case(Opcode::BitshiftRight, 2841882122645057328, 28, 10586835900)]
+    #[case(Opcode::BitshiftRight, -3171532055615339402, 7, -24777594184494840)]
+    fn test_binary_bitshift_valid(
+        #[case] op: Opcode,
+        #[case] lhs: i64,
+        #[case] rhs: i64,
+        #[case] expected: i64,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Integer(lhs)),
+            operator: op,
+            rhs: Box::new(Expression::Integer(rhs)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(expected)));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Float(1.0))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    #[case(Expression::Bool(true), Expression::Float(1.0))]
+    fn test_binary_bitshift_invalid_types(#[case] lhs: Expression, #[case] rhs: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::BitshiftLeft,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Logical operations must operate on bools".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_bitshift_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_bitshift_operation(&op, Value::Integer(1), Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
 }

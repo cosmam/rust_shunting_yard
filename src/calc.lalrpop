@@ -11,8 +11,8 @@ extern {
 
     enum Token<'input> {
         "error" => Token::Error(<LexicalError>),
-        "integer literal" => Token::Integer(<isize>),
-        "hex literal" => Token::Hexadecimal(<isize>),
+        "integer literal" => Token::Integer(<i64>),
+        "hex literal" => Token::Hexadecimal(<i64>),
         "float literal" => Token::Float(<f64>),
         "variable" => Token::Variable(<&'input str>),
         "==" => Token::Equals,

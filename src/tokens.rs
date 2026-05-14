@@ -41,10 +41,10 @@ impl LexicalError {
 }
 
 /// TODO: Document this function.
-fn parse_hex<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Option<isize> {
+fn parse_hex<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Option<i64> {
     let slice = lex.slice();
     let cleaned = slice.strip_prefix("0x").unwrap_or(slice);
-    isize::from_str_radix(cleaned, 16).ok()
+    i64::from_str_radix(cleaned, 16).ok()
 }
 
 /// TODO: Document this function.
@@ -197,11 +197,11 @@ pub enum Token<'source> {
     #[token(",")]
     Comma,
 
-    #[regex("[0-9]+", |lex| lex.slice().parse::<isize>())]
-    Integer(isize),
+    #[regex("[0-9]+", |lex| lex.slice().parse::<i64>())]
+    Integer(i64),
 
     #[regex(r"0x[[:xdigit:]]+", callback = parse_hex)]
-    Hexadecimal(isize),
+    Hexadecimal(i64),
 
     #[regex(r"(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+|[0-9]+)(?:[eE][-+]?[0-9]+)|(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)", callback = parse_float)]
     #[regex(r"NaN|nan|NAN|NaN32|NaN64", callback = parse_float, priority=5)]
