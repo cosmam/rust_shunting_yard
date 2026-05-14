@@ -134,6 +134,7 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
 ///
 /// TODO: Document arithmetic-specific error cases.
 fn apply_binary_math_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    // TODO: Handle overflow/range errors for all binary math operations, not just integer power.
     match convert_binary_math_values(op, lhs, rhs) {
         (Opcode::Equals, _, _)
         | (Opcode::NotEquals, _, _)
