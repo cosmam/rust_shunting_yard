@@ -16,6 +16,8 @@ use crate::ast::{Expression, Func, Opcode};
 use crate::{EvalError, Value};
 use std::collections::HashMap;
 
+const EPSILON: f64 = 0.000001;
+
 /// Evaluate an expression into a runtime value.
 ///
 /// `expr` is evaluated recursively. Literal expression nodes become their
@@ -111,15 +113,97 @@ fn apply_binary(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError>
 ///
 /// # Parameters
 ///
-/// - `op`: TODO: Document supported comparison operators.
-/// - `lhs`: TODO: Document the left-hand value.
-/// - `rhs`: TODO: Document the right-hand value.
+/// - `op`: Equality or ordering comparison operator.
+/// - `lhs`: The evaluated left-hand value.
+/// - `rhs`: The evaluated right-hand value.
 ///
 /// # Errors
 ///
-/// TODO: Document comparison-specific error cases.
+/// Returns [`EvalError::UnexpectedOpcode`] when `op` is not a supported
+/// comparison operator. Returns [`EvalError::InvalidType`] when the operands
+/// are not the same type after integer/float promotion.
+#[rustfmt::skip]
 fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    match convert_binary_values(op, lhs, rhs) {
+        (Opcode::Power, _, _)
+        | (Opcode::Multiply, _, _)
+        | (Opcode::Divide, _, _)
+        | (Opcode::Plus, _, _)
+        | (Opcode::Minus, _, _)
+        | (Opcode::Modulo, _, _)
+        | (Opcode::BitshiftLeft, _, _)
+        | (Opcode::BitshiftRight, _, _)
+        | (Opcode::LogicalAnd, _, _)
+        | (Opcode::LogicalOr, _, _)
+        | (Opcode::LogicalNot, _, _)
+        | (Opcode::BitwiseNot, _, _)
+        | (Opcode::BitwiseAnd, _, _)
+        | (Opcode::BitwiseOr, _, _)
+        | (Opcode::BitwiseXor, _, _)
+        | (Opcode::Degrees, _, _) => Err(EvalError::UnexpectedOpcode),
+        (Opcode::Equals, Value::Bool(l), Value::Bool(r)) |
+        (Opcode::ApproximatelyEquals, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l == r))
+        }
+        (Opcode::NotEquals, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l != r))
+        }
+        (Opcode::GreaterThan, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l & !r))
+        }
+        (Opcode::GreaterThanEquals, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l >= r))
+        }
+        (Opcode::LessThan, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(!l & r))
+        }
+        (Opcode::LessThanEquals, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l <= r))
+        }
+        (Opcode::Equals, Value::Integer(l), Value::Integer(r)) |
+        (Opcode::ApproximatelyEquals, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l == r))
+        }
+        (Opcode::NotEquals, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l != r))
+        }
+        (Opcode::GreaterThan, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l > r))
+        }
+        (Opcode::GreaterThanEquals, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l >= r))
+        }
+        (Opcode::LessThan, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l < r))
+        }
+        (Opcode::LessThanEquals, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l <= r))
+        }
+        (Opcode::Equals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l == r))
+        }
+        (Opcode::NotEquals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l != r))
+        }
+        (Opcode::GreaterThan, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l > r))
+        }
+        (Opcode::GreaterThanEquals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l >= r))
+        }
+        (Opcode::LessThan, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l < r))
+        }
+        (Opcode::LessThanEquals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l <= r))
+        }
+        (Opcode::ApproximatelyEquals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool((l - r).abs() < (l.max(r) * EPSILON)))
+        }
+        _ => Err(EvalError::InvalidType(
+            "Cannot mix types for binary comparison".to_string(),
+        )),
+    }
 }
 
 /// Apply a binary arithmetic operator.
@@ -135,7 +219,7 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
 /// TODO: Document arithmetic-specific error cases.
 fn apply_binary_math_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     // TODO: Handle overflow/range errors for all binary math operations, not just integer power.
-    match convert_binary_math_values(op, lhs, rhs) {
+    match convert_binary_values(op, lhs, rhs) {
         (Opcode::Equals, _, _)
         | (Opcode::NotEquals, _, _)
         | (Opcode::LessThanEquals, _, _)
@@ -198,7 +282,7 @@ fn apply_binary_math_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Va
     }
 }
 
-fn convert_binary_math_values(op: &Opcode, lhs: Value, rhs: Value) -> (&Opcode, Value, Value) {
+fn convert_binary_values(op: &Opcode, lhs: Value, rhs: Value) -> (&Opcode, Value, Value) {
     match (lhs.clone(), rhs.clone()) {
         (Value::Integer(i), Value::Float(f)) => (op, Value::Float(i as f64), Value::Float(f)),
         (Value::Float(f), Value::Integer(i)) => (op, Value::Float(f), Value::Float(i as f64)),
@@ -667,7 +751,7 @@ mod tests {
     #[case(Opcode::BitwiseAnd)]
     #[case(Opcode::BitwiseOr)]
     #[case(Opcode::BitwiseXor)]
-    fn test_apply_unary_invalid_opcode(#[case] op: Opcode) {
+    fn test_apply_unary_invalid_arity(#[case] op: Opcode) {
         let variables: HashMap<String, Value> = HashMap::new();
         let expr = Box::new(Expression::UnaryOperation {
             operator: op,
@@ -696,115 +780,6 @@ mod tests {
     }
 
     /************ Binary operation tests *************/
-
-    #[rstest]
-    #[case(Opcode::LogicalAnd, true, true, true)]
-    #[case(Opcode::LogicalAnd, true, false, false)]
-    #[case(Opcode::LogicalAnd, false, false, false)]
-    #[case(Opcode::LogicalOr, true, true, true)]
-    #[case(Opcode::LogicalOr, true, false, true)]
-    #[case(Opcode::LogicalOr, false, false, false)]
-    fn test_binary_boolean_algebra_valid(
-        #[case] op: Opcode,
-        #[case] lhs: bool,
-        #[case] rhs: bool,
-        #[case] expected: bool,
-    ) {
-        let variables: HashMap<String, Value> = HashMap::new();
-        let expr = Box::new(Expression::BinaryOperation {
-            lhs: Box::new(Expression::Bool(lhs)),
-            operator: op,
-            rhs: Box::new(Expression::Bool(rhs)),
-        });
-
-        let result = eval(&expr, &variables);
-
-        assert_eq!(result, Ok(Value::Bool(expected)));
-    }
-
-    #[rstest]
-    #[case(Expression::Integer(1), Expression::Bool(true))]
-    #[case(Expression::Bool(true), Expression::Integer(1))]
-    #[case(Expression::Integer(1), Expression::Integer(1))]
-    fn test_binary_boolean_algebra_invalid_types(#[case] lhs: Expression, #[case] rhs: Expression) {
-        let variables: HashMap<String, Value> = HashMap::new();
-        let expr = Box::new(Expression::BinaryOperation {
-            lhs: Box::new(lhs),
-            operator: Opcode::LogicalOr,
-            rhs: Box::new(rhs),
-        });
-
-        let result = eval(&expr, &variables);
-
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Logical operations must operate on bools".to_string()
-            ))
-        );
-    }
-
-    #[rstest]
-    #[case(Opcode::Equals)]
-    #[case(Opcode::NotEquals)]
-    #[case(Opcode::LessThanEquals)]
-    #[case(Opcode::GreaterThanEquals)]
-    #[case(Opcode::ApproximatelyEquals)]
-    #[case(Opcode::LessThan)]
-    #[case(Opcode::GreaterThan)]
-    #[case(Opcode::Power)]
-    #[case(Opcode::Multiply)]
-    #[case(Opcode::Divide)]
-    #[case(Opcode::Plus)]
-    #[case(Opcode::Minus)]
-    #[case(Opcode::Modulo)]
-    #[case(Opcode::BitshiftLeft)]
-    #[case(Opcode::BitshiftRight)]
-    #[case(Opcode::LogicalNot)]
-    #[case(Opcode::BitwiseNot)]
-    #[case(Opcode::BitwiseAnd)]
-    #[case(Opcode::BitwiseOr)]
-    #[case(Opcode::BitwiseXor)]
-    #[case(Opcode::Degrees)]
-    fn test_apply_binary_logical_operation_invalid_opcode(#[case] op: Opcode) {
-        let result = apply_binary_logical_operation(&op, Value::Bool(true), Value::Bool(true));
-
-        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
-    }
-
-    #[test]
-    fn test_binary_eval_variable_unknown_lhs() {
-        let variables: HashMap<String, Value> = HashMap::new();
-        let expr = Box::new(Expression::BinaryOperation {
-            lhs: Box::new(Expression::Variable("Test_Name")),
-            operator: Opcode::LogicalOr,
-            rhs: Box::new(Expression::Bool(true)),
-        });
-
-        let result = eval(&expr, &variables);
-
-        assert_eq!(
-            result,
-            Err(EvalError::UnknownVariable("Test_Name".to_string()))
-        );
-    }
-
-    #[test]
-    fn test_binary_eval_variable_unknown_rhs() {
-        let variables: HashMap<String, Value> = HashMap::new();
-        let expr = Box::new(Expression::BinaryOperation {
-            lhs: Box::new(Expression::Bool(true)),
-            operator: Opcode::LogicalOr,
-            rhs: Box::new(Expression::Variable("Test_Name")),
-        });
-
-        let result = eval(&expr, &variables);
-
-        assert_eq!(
-            result,
-            Err(EvalError::UnknownVariable("Test_Name".to_string()))
-        );
-    }
 
     #[rstest]
     #[case(Opcode::BitshiftLeft, 8055371489994718882, 11, 6011609612845125632)]
@@ -1190,5 +1165,238 @@ mod tests {
         let result = apply_binary_math_operation(&op, Value::Integer(1), Value::Integer(1));
 
         assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Opcode::Equals, Expression::Integer(1), Expression::Integer(1), Value::Bool(true))]
+    #[case(Opcode::Equals, Expression::Integer(1), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::Equals, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
+    #[case(Opcode::Equals, Expression::Float(1.0), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::NotEquals, Expression::Integer(1), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::NotEquals, Expression::Integer(1), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::NotEquals, Expression::Float(1.0), Expression::Integer(1), Value::Bool(false))]
+    #[case(Opcode::NotEquals, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Integer(1), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Integer(1), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Float(2.0), Expression::Integer(1), Value::Bool(false))]
+    #[case(Opcode::LessThan, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThanEquals, Expression::Integer(2), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::LessThanEquals, Expression::Integer(2), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThanEquals, Expression::Float(2.0), Expression::Integer(1), Value::Bool(false))]
+    #[case(Opcode::LessThanEquals, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Integer(1), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
+    #[case(Opcode::GreaterThan, Expression::Float(2.0), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThanEquals, Expression::Integer(2), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::GreaterThanEquals, Expression::Integer(2), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThanEquals, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
+    #[case(Opcode::GreaterThanEquals, Expression::Float(2.0), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Integer(1), Expression::Integer(1), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Integer(1), Expression::Integer(2), Value::Bool(false))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Integer(1000), Expression::Float(1000.0005), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Float(1000.002), Expression::Integer(1000), Value::Bool(false))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Float(1000.0), Expression::Float(1000.0005), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Float(1000.0), Expression::Float(1000.002), Value::Bool(false))]
+    #[case(Opcode::Equals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::NotEquals, Expression::Bool(true), Expression::Bool(false), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Bool(false), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::LessThanEquals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Bool(true), Expression::Bool(false), Value::Bool(true))]
+    #[case(Opcode::GreaterThanEquals, Expression::Bool(false), Expression::Bool(false), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Bool(true), Expression::Bool(false), Value::Bool(false))]
+    fn test_apply_binary_comparison_regular(
+        #[case] op: Opcode,
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: op,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    #[case(Expression::Float(1.0), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Float(1.0))]
+    fn test_apply_binary_comparison_operation_invalid_types(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::Equals,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Cannot mix types for binary comparison".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_comparison_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_comparison(&op, Value::Integer(1), Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(Opcode::LogicalAnd, true, true, true)]
+    #[case(Opcode::LogicalAnd, true, false, false)]
+    #[case(Opcode::LogicalAnd, false, false, false)]
+    #[case(Opcode::LogicalOr, true, true, true)]
+    #[case(Opcode::LogicalOr, true, false, true)]
+    #[case(Opcode::LogicalOr, false, false, false)]
+    fn test_binary_boolean_algebra_valid(
+        #[case] op: Opcode,
+        #[case] lhs: bool,
+        #[case] rhs: bool,
+        #[case] expected: bool,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(lhs)),
+            operator: op,
+            rhs: Box::new(Expression::Bool(rhs)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Bool(expected)));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    #[case(Expression::Integer(1), Expression::Integer(1))]
+    fn test_binary_boolean_algebra_invalid_types(#[case] lhs: Expression, #[case] rhs: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::LogicalOr,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Logical operations must operate on bools".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_logical_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_logical_operation(&op, Value::Bool(true), Value::Bool(true));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[test]
+    fn test_binary_eval_variable_unknown_lhs() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Variable("Test_Name")),
+            operator: Opcode::LogicalOr,
+            rhs: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("Test_Name".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_binary_eval_variable_unknown_rhs() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(true)),
+            operator: Opcode::LogicalOr,
+            rhs: Box::new(Expression::Variable("Test_Name")),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("Test_Name".to_string()))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Degrees)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    fn test_apply_binary_invalid_arity(#[case] op: Opcode) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(true)),
+            operator: op,
+            rhs: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
     }
 }
