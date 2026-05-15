@@ -510,14 +510,9 @@ fn apply_logical_not(val: Value) -> Result<Value, EvalError> {
 /// TODO: Document function-specific error cases.
 fn apply_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
     match func {
-        Func::Min
-        | Func::Max => apply_n_nary_function(func, vals),
-        Func::Round
-        | Func::Floor
-        | Func::Ceiling => apply_rounding_function(func, vals),
-        Func::Power
-        | Func::Modulo
-        | Func::Remainder => apply_binary_function(func, vals),
+        Func::Min | Func::Max => apply_n_nary_function(func, vals),
+        Func::Round | Func::Floor | Func::Ceiling => apply_rounding_function(func, vals),
+        Func::Power | Func::Modulo | Func::Remainder => apply_binary_function(func, vals),
         Func::Cos
         | Func::Sin
         | Func::Tan
@@ -543,8 +538,47 @@ fn apply_binary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalErr
     Ok(Value::Bool(false))
 }
 
+fn pare_vector_unary(vals: Vec<Value>) -> Result<Value, EvalError> {
+    match vals.as_slice() {
+        [] | [_, _, ..] => Err(EvalError::InvalidArity),
+        [Value::Bool(_)] => Err(EvalError::InvalidType(
+            "Unary functions not defined for bool".to_string(),
+        )),
+        [Value::Integer(val)] => Ok(Value::Float(*val as f64)),
+        [Value::Float(val)] => Ok(Value::Float(*val)),
+    }
+}
+
+fn apply_float_unary(val: Value, op: fn(f64) -> f64) -> Result<Value, EvalError> {
+    match val {
+        Value::Float(value) => Ok(Value::Float(op(value))),
+        Value::Bool(_) | Value::Integer(_) => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
 fn apply_unary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    let value = pare_vector_unary(vals)?;
+
+    match func {
+        Func::Cos => apply_float_unary(value, f64::cos),
+        Func::Sin => apply_float_unary(value, f64::sin),
+        Func::Tan => apply_float_unary(value, f64::tan),
+        Func::ACos => apply_float_unary(value, f64::acos),
+        Func::ASin => apply_float_unary(value, f64::asin),
+        Func::ATan => apply_float_unary(value, f64::atan),
+        Func::Abs => apply_float_unary(value, f64::abs),
+        Func::Ln => apply_float_unary(value, f64::ln),
+        Func::Log => apply_float_unary(value, f64::log10),
+        Func::Exp => apply_float_unary(value, f64::exp),
+        Func::Min
+        | Func::Max
+        | Func::Power
+        | Func::Modulo
+        | Func::Remainder
+        | Func::Round
+        | Func::Floor
+        | Func::Ceiling => Err(EvalError::UnexpectedOpcode),
+    }
 }
 
 // Some of the tests here are defensive programming; the AST will not
@@ -1433,5 +1467,110 @@ mod tests {
         let result = eval(&expr, &variables);
 
         assert_eq!(result, Err(EvalError::InvalidArity));
+    }
+
+    #[rstest]
+    #[case(Func::Cos, Value::Integer(0), Value::Float(1.0))]
+    #[case(Func::Cos, Value::Float(0.0), Value::Float(1.0))]
+    #[case(Func::Sin, Value::Integer(0), Value::Float(0.0))]
+    #[case(Func::Sin, Value::Float(0.0), Value::Float(0.0))]
+    #[case(Func::Tan, Value::Integer(0), Value::Float(0.0))]
+    #[case(Func::Tan, Value::Float(0.0), Value::Float(0.0))]
+    #[case(Func::ACos, Value::Integer(1), Value::Float(0.0))]
+    #[case(Func::ACos, Value::Float(1.0), Value::Float(0.0))]
+    #[case(Func::ASin, Value::Integer(0), Value::Float(0.0))]
+    #[case(Func::ASin, Value::Float(0.0), Value::Float(0.0))]
+    #[case(Func::ATan, Value::Integer(0), Value::Float(0.0))]
+    #[case(Func::ATan, Value::Float(0.0), Value::Float(0.0))]
+    #[case(Func::Abs, Value::Integer(-1), Value::Float(1.0))]
+    #[case(Func::Abs, Value::Float(-1.0), Value::Float(1.0))]
+    #[case(Func::Ln, Value::Integer(1), Value::Float(0.0))]
+    #[case(Func::Ln, Value::Float(1.0), Value::Float(0.0))]
+    #[case(Func::Log, Value::Integer(1), Value::Float(0.0))]
+    #[case(Func::Log, Value::Float(1.0), Value::Float(0.0))]
+    #[case(Func::Exp, Value::Integer(0), Value::Float(1.0))]
+    #[case(Func::Exp, Value::Float(0.0), Value::Float(1.0))]
+    fn test_unary_function_regular(
+        #[case] func: Func,
+        #[case] value: Value,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let argument = match value {
+            Value::Bool(value) => Expression::Bool(value),
+            Value::Integer(value) => Expression::Integer(value),
+            Value::Float(value) => Expression::Float(value),
+        };
+        let expr = Box::new(Expression::Function {
+            func,
+            arguments: vec![argument],
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true))]
+    #[case(Value::Integer(-1))]
+    fn test_apply_float_unary(#[case] value: Value) {
+        let result = apply_float_unary(value, f64::abs);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    fn test_apply_unary_function_bool_invalid_type(#[case] func: Func) {
+        let result = apply_unary_function(&func, vec![Value::Bool(true)]);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Unary functions not defined for bool".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    fn test_apply_unary_function_invalid_arity(#[case] func: Func) {
+        let result = apply_unary_function(&func, vec![Value::Float(1.0), Value::Float(2.0)]);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
+    }
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    #[case(Func::Power)]
+    #[case(Func::Modulo)]
+    #[case(Func::Remainder)]
+    #[case(Func::Round)]
+    #[case(Func::Floor)]
+    #[case(Func::Ceiling)]
+    fn test_apply_unary_function_unsupported_func(#[case] func: Func) {
+        let result = apply_unary_function(&func, vec![Value::Float(1.0)]);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
     }
 }
