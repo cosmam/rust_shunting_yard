@@ -509,6 +509,41 @@ fn apply_logical_not(val: Value) -> Result<Value, EvalError> {
 ///
 /// TODO: Document function-specific error cases.
 fn apply_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
+    match func {
+        Func::Min
+        | Func::Max => apply_n_nary_function(func, vals),
+        Func::Round
+        | Func::Floor
+        | Func::Ceiling => apply_rounding_function(func, vals),
+        Func::Power
+        | Func::Modulo
+        | Func::Remainder => apply_binary_function(func, vals),
+        Func::Cos
+        | Func::Sin
+        | Func::Tan
+        | Func::ACos
+        | Func::ASin
+        | Func::ATan
+        | Func::Abs
+        | Func::Ln
+        | Func::Log
+        | Func::Exp => apply_unary_function(func, vals),
+    }
+}
+
+fn apply_n_nary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
+    Ok(Value::Bool(false))
+}
+
+fn apply_rounding_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
+    Ok(Value::Bool(false))
+}
+
+fn apply_binary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
+    Ok(Value::Bool(false))
+}
+
+fn apply_unary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
     Ok(Value::Bool(false))
 }
 
