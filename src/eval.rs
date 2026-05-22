@@ -535,7 +535,89 @@ fn apply_rounding_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalE
 }
 
 fn apply_binary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    let (lhs, rhs) = pare_vector_binary(vals)?;
+
+    match func {
+        Func::Power => apply_power_function(lhs, rhs),
+        Func::Modulo => apply_modulo_function(lhs, rhs),
+        Func::Remainder => apply_remainder_function(lhs, rhs),
+        Func::Min
+        | Func::Max
+        | Func::Round
+        | Func::Cos
+        | Func::Sin
+        | Func::Tan
+        | Func::ACos
+        | Func::ASin
+        | Func::ATan
+        | Func::Abs
+        | Func::Ln
+        | Func::Log
+        | Func::Exp
+        | Func::Floor
+        | Func::Ceiling => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
+fn apply_power_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match (lhs, rhs) {
+        (Value::Integer(l), Value::Integer(r)) => {
+            let result: Result<u32, _> = r.try_into();
+            match result {
+                Ok(val) => match l.checked_pow(val) {
+                    Some(v) => Ok(Value::Integer(v)),
+                    None => Err(EvalError::MathError(
+                        "Integer overflow on power".to_string(),
+                    )),
+                },
+                Err(_) => Err(EvalError::MathError(
+                    "Integer exponent too large".to_string(),
+                )),
+            }
+        }
+        (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64).powf(r))),
+        (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l.powf(r as f64))),
+        (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.powf(r))),
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for power functions".to_string(),
+        )),
+    }
+}
+
+fn apply_modulo_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match (lhs, rhs) {
+        (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l % r)),
+        (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64) % r)),
+        (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l % (r as f64))),
+        (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l % r)),
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for modulo functions".to_string(),
+        )),
+    }
+}
+
+fn apply_remainder_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match (lhs, rhs) {
+        (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l.rem_euclid(r))),
+        (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64).rem_euclid(r))),
+        (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l.rem_euclid(r as f64))),
+        (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.rem_euclid(r))),
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for power functions".to_string(),
+        )),
+    }
+}
+
+fn pare_vector_binary(vals: Vec<Value>) -> Result<(Value, Value), EvalError> {
+    match vals.as_slice() {
+        [lhs, rhs] => match (lhs, rhs) {
+            (Value::Bool(_), _) | (_, Value::Bool(_)) => Err(EvalError::InvalidType(
+                "Binary functions not defined for bool".to_string(),
+            )),
+            _ => Ok((lhs.clone(), rhs.clone())),
+        },
+        _ => Err(EvalError::InvalidArity),
+    }
 }
 
 fn pare_vector_unary(vals: Vec<Value>) -> Result<Value, EvalError> {
@@ -1572,5 +1654,170 @@ mod tests {
         let result = apply_unary_function(&func, vec![Value::Float(1.0)]);
 
         assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Func::Power, Expression::Integer(2), Expression::Integer(3), Value::Integer(8))]
+    #[case(Func::Power, Expression::Integer(2), Expression::Float(3.0), Value::Float(8.0))]
+    #[case(Func::Power, Expression::Float(2.0), Expression::Integer(3), Value::Float(8.0))]
+    #[case(Func::Power, Expression::Float(2.0), Expression::Float(3.0), Value::Float(8.0))]
+    #[case(Func::Modulo, Expression::Integer(13), Expression::Integer(5), Value::Integer(3))]
+    #[case(Func::Modulo, Expression::Integer(13), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Func::Modulo, Expression::Float(13.0), Expression::Integer(5), Value::Float(3.0))]
+    #[case(Func::Modulo, Expression::Float(13.0), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Func::Remainder, Expression::Integer(13), Expression::Integer(5), Value::Integer(3))]
+    #[case(Func::Remainder, Expression::Integer(13), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Func::Remainder, Expression::Float(13.0), Expression::Integer(5), Value::Float(3.0))]
+    #[case(Func::Remainder, Expression::Float(13.0), Expression::Float(5.0), Value::Float(3.0))]
+    fn test_apply_binary_function_regular(
+        #[case] func: Func,
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::Function {
+            func,
+            arguments: vec![lhs, rhs],
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    #[case(Func::Round)]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    #[case(Func::Floor)]
+    #[case(Func::Ceiling)]
+    fn test_apply_binary_function_unsupported_func(#[case] func: Func) {
+        let result = apply_binary_function(&func, vec![Value::Integer(1), Value::Integer(2)]);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), Value::Bool(false))]
+    #[case(Value::Bool(true), Value::Integer(2))]
+    #[case(Value::Integer(2), Value::Bool(true))]
+    #[case(Value::Bool(true), Value::Float(2.0))]
+    #[case(Value::Float(2.0), Value::Bool(true))]
+    fn test_apply_power_function_bool_invalid_type(#[case] lhs: Value, #[case] rhs: Value) {
+        let result = apply_power_function(lhs, rhs);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for power functions".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_power_function_integer_exponent_too_large() {
+        let result = apply_power_function(Value::Integer(10), Value::Integer(5_000_000_000));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer exponent too large".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_power_function_integer_overflow() {
+        let result =
+            apply_power_function(Value::Integer(1_000_000_000), Value::Integer(1_000_000_000));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on power".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), Value::Bool(false))]
+    #[case(Value::Bool(true), Value::Integer(2))]
+    #[case(Value::Integer(2), Value::Bool(true))]
+    #[case(Value::Bool(true), Value::Float(2.0))]
+    #[case(Value::Float(2.0), Value::Bool(true))]
+    fn test_apply_modulo_function_bool_invalid_type(#[case] lhs: Value, #[case] rhs: Value) {
+        let result = apply_modulo_function(lhs, rhs);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for modulo functions".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), Value::Bool(false))]
+    #[case(Value::Bool(true), Value::Integer(2))]
+    #[case(Value::Integer(2), Value::Bool(true))]
+    #[case(Value::Bool(true), Value::Float(2.0))]
+    #[case(Value::Float(2.0), Value::Bool(true))]
+    fn test_apply_remainder_function_bool_invalid_type(#[case] lhs: Value, #[case] rhs: Value) {
+        let result = apply_remainder_function(lhs, rhs);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for power functions".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(
+        vec![Value::Integer(1), Value::Integer(2)],
+        Ok((Value::Integer(1), Value::Integer(2)))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0)],
+        Ok((Value::Integer(1), Value::Float(2.0)))
+    )]
+    #[case(vec![], Err(EvalError::InvalidArity))]
+    #[case(vec![Value::Integer(1)], Err(EvalError::InvalidArity))]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0), Value::Float(3.0)],
+        Err(EvalError::InvalidArity)
+    )]
+    #[case(
+        vec![Value::Bool(true), Value::Float(2.0)],
+        Err(EvalError::InvalidType(
+            "Binary functions not defined for bool".to_string(),
+        ))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true)],
+        Err(EvalError::InvalidType(
+            "Binary functions not defined for bool".to_string(),
+        ))
+    )]
+    fn test_pare_vector_binary(
+        #[case] vals: Vec<Value>,
+        #[case] expected: Result<(Value, Value), EvalError>,
+    ) {
+        let result = pare_vector_binary(vals);
+
+        assert_eq!(result, expected);
     }
 }
