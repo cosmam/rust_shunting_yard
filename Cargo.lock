@@ -465,6 +465,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
 
 [[package]]
+name = "roundable"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "034c92e809b6c2e9c7fe11e63a71d7d055571a00762bdbbd06f54e9fd2f94369"
+
+[[package]]
 name = "rstest"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -561,6 +567,7 @@ dependencies = [
  "lalrpop-util",
  "logos",
  "logos-display",
+ "roundable",
  "rstest",
 ]
 

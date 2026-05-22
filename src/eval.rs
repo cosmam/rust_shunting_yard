@@ -14,6 +14,7 @@
 
 use crate::ast::{Expression, Func, Opcode};
 use crate::{EvalError, Value};
+use roundable::{Roundable, Tie};
 use std::collections::HashMap;
 
 const EPSILON: f64 = 0.000001;
@@ -531,7 +532,215 @@ fn apply_n_nary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalErr
 }
 
 fn apply_rounding_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    let (value, precision) = pare_vector_rounding(vals)?;
+
+    match func {
+        Func::Round => apply_round_function(value, precision),
+        Func::Floor => apply_floor_function(value, precision),
+        Func::Ceiling => apply_ceiling_function(value, precision),
+        Func::Min
+        | Func::Max
+        | Func::Power
+        | Func::Modulo
+        | Func::Remainder
+        | Func::Cos
+        | Func::Sin
+        | Func::Tan
+        | Func::ACos
+        | Func::ASin
+        | Func::ATan
+        | Func::Abs
+        | Func::Ln
+        | Func::Log
+        | Func::Exp => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
+fn apply_round_function(value: Value, precision: Option<Value>) -> Result<Value, EvalError> {
+    match (value, precision) {
+        (Value::Integer(value), None) => round_i64(value, 1).map(Value::Integer),
+        (Value::Float(value), None) => round_f64(value, 1.0).map(Value::Float),
+        (Value::Integer(value), Some(Value::Integer(precision))) => {
+            round_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Integer(value), Some(Value::Float(precision))) => {
+            round_f64(value as f64, precision).map(Value::Float)
+        }
+        (Value::Float(value), Some(Value::Integer(precision))) => {
+            round_f64_to_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Float(value), Some(Value::Float(precision))) => {
+            round_f64(value, precision).map(Value::Float)
+        }
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for round functions".to_string(),
+        )),
+    }
+}
+
+fn round_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
+    if precision <= 0 {
+        return Err(EvalError::MathError(
+            "Round precision must be positive".to_string(),
+        ));
+    }
+
+    value
+        .try_round_to(precision, Tie::Up)
+        .ok_or_else(|| EvalError::MathError("Integer overflow on round".to_string()))
+}
+
+fn round_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
+    if precision <= 0.0 {
+        return Err(EvalError::MathError(
+            "Round precision must be positive".to_string(),
+        ));
+    }
+
+    value
+        .try_round_to(precision, Tie::Up)
+        .ok_or_else(|| EvalError::MathError("Float overflow on round".to_string()))
+}
+
+fn round_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
+    let rounded = round_f64(value, precision as f64)?;
+
+    if rounded < i64::MIN as f64 || rounded > i64::MAX as f64 {
+        return Err(EvalError::MathError(
+            "Integer overflow on round".to_string(),
+        ));
+    }
+
+    Ok(rounded as i64)
+}
+
+fn apply_floor_function(value: Value, precision: Option<Value>) -> Result<Value, EvalError> {
+    match (value, precision) {
+        (Value::Integer(value), None) => floor_i64(value, 1).map(Value::Integer),
+        (Value::Float(value), None) => floor_f64(value, 1.0).map(Value::Float),
+        (Value::Integer(value), Some(Value::Integer(precision))) => {
+            floor_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Integer(value), Some(Value::Float(precision))) => {
+            floor_f64(value as f64, precision).map(Value::Float)
+        }
+        (Value::Float(value), Some(Value::Integer(precision))) => {
+            floor_f64_to_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Float(value), Some(Value::Float(precision))) => {
+            floor_f64(value, precision).map(Value::Float)
+        }
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for floor functions".to_string(),
+        )),
+    }
+}
+
+fn apply_ceiling_function(value: Value, precision: Option<Value>) -> Result<Value, EvalError> {
+    match (value, precision) {
+        (Value::Integer(value), None) => ceiling_i64(value, 1).map(Value::Integer),
+        (Value::Float(value), None) => ceiling_f64(value, 1.0).map(Value::Float),
+        (Value::Integer(value), Some(Value::Integer(precision))) => {
+            ceiling_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Integer(value), Some(Value::Float(precision))) => {
+            ceiling_f64(value as f64, precision).map(Value::Float)
+        }
+        (Value::Float(value), Some(Value::Integer(precision))) => {
+            ceiling_f64_to_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Float(value), Some(Value::Float(precision))) => {
+            ceiling_f64(value, precision).map(Value::Float)
+        }
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for ceiling functions".to_string(),
+        )),
+    }
+}
+
+fn floor_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
+    if precision <= 0 {
+        return Err(EvalError::MathError(
+            "Floor precision must be positive".to_string(),
+        ));
+    }
+
+    value
+        .div_euclid(precision)
+        .checked_mul(precision)
+        .ok_or_else(|| EvalError::MathError("Integer overflow on floor".to_string()))
+}
+
+fn floor_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
+    if precision <= 0.0 {
+        return Err(EvalError::MathError(
+            "Floor precision must be positive".to_string(),
+        ));
+    }
+
+    let result = (value / precision).floor() * precision;
+    if result.is_finite() {
+        Ok(result)
+    } else {
+        Err(EvalError::MathError("Float overflow on floor".to_string()))
+    }
+}
+
+fn floor_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
+    let floored = floor_f64(value, precision as f64)?;
+
+    if floored < i64::MIN as f64 || floored > i64::MAX as f64 {
+        return Err(EvalError::MathError(
+            "Integer overflow on floor".to_string(),
+        ));
+    }
+
+    Ok(floored as i64)
+}
+
+fn ceiling_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
+    if precision <= 0 {
+        return Err(EvalError::MathError(
+            "Ceiling precision must be positive".to_string(),
+        ));
+    }
+
+    let base = floor_i64(value, precision)?;
+    if base == value {
+        Ok(base)
+    } else {
+        base.checked_add(precision)
+            .ok_or_else(|| EvalError::MathError("Integer overflow on ceiling".to_string()))
+    }
+}
+
+fn ceiling_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
+    if precision <= 0.0 {
+        return Err(EvalError::MathError(
+            "Ceiling precision must be positive".to_string(),
+        ));
+    }
+
+    let result = (value / precision).ceil() * precision;
+    if result.is_finite() {
+        Ok(result)
+    } else {
+        Err(EvalError::MathError(
+            "Float overflow on ceiling".to_string(),
+        ))
+    }
+}
+
+fn ceiling_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
+    let ceiling = ceiling_f64(value, precision as f64)?;
+
+    if ceiling < i64::MIN as f64 || ceiling > i64::MAX as f64 {
+        return Err(EvalError::MathError(
+            "Integer overflow on ceiling".to_string(),
+        ));
+    }
+
+    Ok(ceiling as i64)
 }
 
 fn apply_binary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
@@ -620,6 +829,17 @@ fn pare_vector_binary(vals: Vec<Value>) -> Result<(Value, Value), EvalError> {
     }
 }
 
+fn pare_vector_rounding(vals: Vec<Value>) -> Result<(Value, Option<Value>), EvalError> {
+    match vals.as_slice() {
+        [Value::Bool(_)] | [Value::Bool(_), _] | [_, Value::Bool(_)] => Err(
+            EvalError::InvalidType("Rounding functions not defined for bool".to_string()),
+        ),
+        [value] => Ok((value.clone(), None)),
+        [value, precision] => Ok((value.clone(), Some(precision.clone()))),
+        _ => Err(EvalError::InvalidArity),
+    }
+}
+
 fn pare_vector_unary(vals: Vec<Value>) -> Result<Value, EvalError> {
     match vals.as_slice() {
         [] | [_, _, ..] => Err(EvalError::InvalidArity),
@@ -675,6 +895,14 @@ mod tests {
     // in general, we'll test from the public eval function. The exceptions
     // are redundant/defensive error handling, which we're testing as a way
     // to catch regressions/changed assumptions
+
+    fn value_to_expression(value: Value) -> Expression<'static> {
+        match value {
+            Value::Bool(value) => Expression::Bool(value),
+            Value::Integer(value) => Expression::Integer(value),
+            Value::Float(value) => Expression::Float(value),
+        }
+    }
 
     /************ Unary operation tests *************/
 
@@ -1786,6 +2014,292 @@ mod tests {
     }
 
     #[rstest]
+    #[case(Value::Integer(314), None, Value::Integer(314))]
+    #[case(Value::Float(314.1), None, Value::Float(314.0))]
+    #[case(Value::Integer(314), Some(Value::Integer(10)), Value::Integer(310))]
+    #[case(Value::Integer(314), Some(Value::Float(100.0)), Value::Float(300.0))]
+    #[case(Value::Float(314.1), Some(Value::Integer(10)), Value::Integer(310))]
+    #[case(Value::Float(314.1), Some(Value::Float(100.0)), Value::Float(300.0))]
+    fn test_eval_round_function_regular(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let mut arguments = vec![value_to_expression(value)];
+        if let Some(precision) = precision {
+            arguments.push(value_to_expression(precision));
+        }
+        let expr = Box::new(Expression::Function {
+            func: Func::Round,
+            arguments,
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    #[case(Func::Power)]
+    #[case(Func::Modulo)]
+    #[case(Func::Remainder)]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    fn test_apply_rounding_function_unsupported_func(#[case] func: Func) {
+        let result = apply_rounding_function(&func, vec![Value::Integer(1)]);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), Some(Value::Integer(0)))]
+    #[case(Value::Integer(314), Some(Value::Float(0.0)))]
+    #[case(Value::Float(314.1), Some(Value::Integer(0)))]
+    #[case(Value::Float(314.1), Some(Value::Float(0.0)))]
+    #[case(Value::Integer(314), Some(Value::Integer(-10)))]
+    #[case(Value::Float(314.1), Some(Value::Float(-10.0)))]
+    fn test_apply_round_function_non_positive_precision(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_round_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Round precision must be positive".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_round_function_float_to_integer_overflow() {
+        let result = apply_round_function(Value::Float(f64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on round".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_round_function_integer_overflow() {
+        let result = apply_round_function(Value::Integer(i64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on round".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), None)]
+    #[case(Value::Bool(true), Some(Value::Integer(2)))]
+    #[case(Value::Bool(true), Some(Value::Float(2.0)))]
+    #[case(Value::Integer(2), Some(Value::Bool(true)))]
+    #[case(Value::Float(2.0), Some(Value::Bool(true)))]
+    fn test_apply_round_function_bool_invalid_type(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_round_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for round functions".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), None)]
+    #[case(Value::Bool(true), Some(Value::Integer(2)))]
+    #[case(Value::Bool(true), Some(Value::Float(2.0)))]
+    #[case(Value::Integer(2), Some(Value::Bool(true)))]
+    #[case(Value::Float(2.0), Some(Value::Bool(true)))]
+    fn test_apply_floor_function_bool_invalid_type(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_floor_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for floor functions".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), None, Value::Integer(314))]
+    #[case(Value::Float(314.9), None, Value::Float(314.0))]
+    #[case(Value::Integer(314), Some(Value::Integer(10)), Value::Integer(310))]
+    #[case(Value::Integer(314), Some(Value::Float(100.0)), Value::Float(300.0))]
+    #[case(Value::Float(314.9), Some(Value::Integer(10)), Value::Integer(310))]
+    #[case(Value::Float(314.9), Some(Value::Float(100.0)), Value::Float(300.0))]
+    fn test_eval_floor_function_regular(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let mut arguments = vec![value_to_expression(value)];
+        if let Some(precision) = precision {
+            arguments.push(value_to_expression(precision));
+        }
+        let expr = Box::new(Expression::Function {
+            func: Func::Floor,
+            arguments,
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), Some(Value::Integer(0)))]
+    #[case(Value::Integer(314), Some(Value::Float(0.0)))]
+    #[case(Value::Float(314.1), Some(Value::Integer(0)))]
+    #[case(Value::Float(314.1), Some(Value::Float(0.0)))]
+    #[case(Value::Integer(314), Some(Value::Integer(-10)))]
+    #[case(Value::Float(314.1), Some(Value::Float(-10.0)))]
+    fn test_apply_floor_function_non_positive_precision(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_floor_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Floor precision must be positive".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_floor_function_float_to_integer_overflow() {
+        let result = apply_floor_function(Value::Float(f64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on floor".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), None)]
+    #[case(Value::Bool(true), Some(Value::Integer(2)))]
+    #[case(Value::Bool(true), Some(Value::Float(2.0)))]
+    #[case(Value::Integer(2), Some(Value::Bool(true)))]
+    #[case(Value::Float(2.0), Some(Value::Bool(true)))]
+    fn test_apply_ceiling_function_bool_invalid_type(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_ceiling_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for ceiling functions".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), None, Value::Integer(314))]
+    #[case(Value::Float(314.1), None, Value::Float(315.0))]
+    #[case(Value::Integer(314), Some(Value::Integer(10)), Value::Integer(320))]
+    #[case(Value::Integer(314), Some(Value::Float(100.0)), Value::Float(400.0))]
+    #[case(Value::Float(314.1), Some(Value::Integer(10)), Value::Integer(320))]
+    #[case(Value::Float(314.1), Some(Value::Float(100.0)), Value::Float(400.0))]
+    fn test_eval_ceiling_function_regular(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let mut arguments = vec![value_to_expression(value)];
+        if let Some(precision) = precision {
+            arguments.push(value_to_expression(precision));
+        }
+        let expr = Box::new(Expression::Function {
+            func: Func::Ceiling,
+            arguments,
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), Some(Value::Integer(0)))]
+    #[case(Value::Integer(314), Some(Value::Float(0.0)))]
+    #[case(Value::Float(314.1), Some(Value::Integer(0)))]
+    #[case(Value::Float(314.1), Some(Value::Float(0.0)))]
+    #[case(Value::Integer(314), Some(Value::Integer(-10)))]
+    #[case(Value::Float(314.1), Some(Value::Float(-10.0)))]
+    fn test_apply_ceiling_function_non_positive_precision(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_ceiling_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Ceiling precision must be positive".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_ceiling_function_integer_overflow() {
+        let result = apply_ceiling_function(Value::Integer(i64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on ceiling".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_ceiling_function_float_to_integer_overflow() {
+        let result = apply_ceiling_function(Value::Float(f64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on ceiling".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
     #[case(
         vec![Value::Integer(1), Value::Integer(2)],
         Ok((Value::Integer(1), Value::Integer(2)))
@@ -1817,6 +2331,63 @@ mod tests {
         #[case] expected: Result<(Value, Value), EvalError>,
     ) {
         let result = pare_vector_binary(vals);
+
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(
+        vec![Value::Integer(1)],
+        Ok((Value::Integer(1), None))
+    )]
+    #[case(
+        vec![Value::Float(1.5)],
+        Ok((Value::Float(1.5), None))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Integer(2)],
+        Ok((Value::Integer(1), Some(Value::Integer(2))))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.5)],
+        Ok((Value::Integer(1), Some(Value::Float(2.5))))
+    )]
+    #[case(
+        vec![Value::Float(1.5), Value::Integer(2)],
+        Ok((Value::Float(1.5), Some(Value::Integer(2))))
+    )]
+    #[case(
+        vec![Value::Float(1.5), Value::Float(2.5)],
+        Ok((Value::Float(1.5), Some(Value::Float(2.5))))
+    )]
+    #[case(vec![], Err(EvalError::InvalidArity))]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0), Value::Float(3.0)],
+        Err(EvalError::InvalidArity)
+    )]
+    #[case(
+        vec![Value::Bool(true)],
+        Err(EvalError::InvalidType(
+            "Rounding functions not defined for bool".to_string(),
+        ))
+    )]
+    #[case(
+        vec![Value::Bool(true), Value::Float(2.0)],
+        Err(EvalError::InvalidType(
+            "Rounding functions not defined for bool".to_string(),
+        ))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true)],
+        Err(EvalError::InvalidType(
+            "Rounding functions not defined for bool".to_string(),
+        ))
+    )]
+    fn test_pare_vector_rounding(
+        #[case] vals: Vec<Value>,
+        #[case] expected: Result<(Value, Option<Value>), EvalError>,
+    ) {
+        let result = pare_vector_rounding(vals);
 
         assert_eq!(result, expected);
     }
