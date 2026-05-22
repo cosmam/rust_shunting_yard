@@ -528,7 +528,114 @@ fn apply_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
 }
 
 fn apply_n_nary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
-    Ok(Value::Bool(false))
+    let vals = pare_vector_n_nary(vals)?;
+
+    match func {
+        Func::Min => apply_min_function(vals),
+        Func::Max => apply_max_function(vals),
+        Func::Power
+        | Func::Modulo
+        | Func::Remainder
+        | Func::Round
+        | Func::Floor
+        | Func::Ceiling
+        | Func::Cos
+        | Func::Sin
+        | Func::Tan
+        | Func::ACos
+        | Func::ASin
+        | Func::ATan
+        | Func::Abs
+        | Func::Ln
+        | Func::Log
+        | Func::Exp => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
+fn apply_min_function(vals: Vec<Value>) -> Result<Value, EvalError> {
+    match vals.as_slice() {
+        [] => Err(EvalError::InvalidArity),
+        [Value::Integer(_), ..] => {
+            let mut min = None;
+            for value in vals {
+                match value {
+                    Value::Integer(value) => {
+                        min = Some(min.map_or(value, |min: i64| min.min(value)))
+                    }
+                    // apply_n_nary_function calls pare_vector_n_nary first, so this
+                    // branch is only reachable if apply_min_function is called directly.
+                    Value::Bool(_) | Value::Float(_) => {
+                        return Err(EvalError::InvalidType(
+                            "Min expected all integer values".to_string(),
+                        ));
+                    }
+                }
+            }
+            min.map(Value::Integer).ok_or(EvalError::InvalidArity)
+        }
+        [Value::Float(_), ..] => {
+            let mut min = None;
+            for value in vals {
+                match value {
+                    Value::Float(value) => min = Some(min.map_or(value, |min: f64| min.min(value))),
+                    // apply_n_nary_function calls pare_vector_n_nary first, so this
+                    // branch is only reachable if apply_min_function is called directly.
+                    Value::Bool(_) | Value::Integer(_) => {
+                        return Err(EvalError::InvalidType(
+                            "Min expected all float values".to_string(),
+                        ));
+                    }
+                }
+            }
+            min.map(Value::Float).ok_or(EvalError::InvalidArity)
+        }
+        [Value::Bool(_), ..] => Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        )),
+    }
+}
+
+fn apply_max_function(vals: Vec<Value>) -> Result<Value, EvalError> {
+    match vals.as_slice() {
+        [] => Err(EvalError::InvalidArity),
+        [Value::Integer(_), ..] => {
+            let mut max = None;
+            for value in vals {
+                match value {
+                    Value::Integer(value) => {
+                        max = Some(max.map_or(value, |max: i64| max.max(value)))
+                    }
+                    // apply_n_nary_function calls pare_vector_n_nary first, so this
+                    // branch is only reachable if apply_max_function is called directly.
+                    Value::Bool(_) | Value::Float(_) => {
+                        return Err(EvalError::InvalidType(
+                            "Max expected all integer values".to_string(),
+                        ));
+                    }
+                }
+            }
+            max.map(Value::Integer).ok_or(EvalError::InvalidArity)
+        }
+        [Value::Float(_), ..] => {
+            let mut max = None;
+            for value in vals {
+                match value {
+                    Value::Float(value) => max = Some(max.map_or(value, |max: f64| max.max(value))),
+                    // apply_n_nary_function calls pare_vector_n_nary first, so this
+                    // branch is only reachable if apply_max_function is called directly.
+                    Value::Bool(_) | Value::Integer(_) => {
+                        return Err(EvalError::InvalidType(
+                            "Max expected all float values".to_string(),
+                        ));
+                    }
+                }
+            }
+            max.map(Value::Float).ok_or(EvalError::InvalidArity)
+        }
+        [Value::Bool(_), ..] => Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        )),
+    }
 }
 
 fn apply_rounding_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
@@ -829,6 +936,26 @@ fn pare_vector_binary(vals: Vec<Value>) -> Result<(Value, Value), EvalError> {
     }
 }
 
+fn pare_vector_n_nary(vals: Vec<Value>) -> Result<Vec<Value>, EvalError> {
+    if vals.iter().any(|value| matches!(value, Value::Bool(_))) {
+        return Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        ));
+    }
+
+    if vals.iter().any(|value| matches!(value, Value::Float(_))) {
+        Ok(vals
+            .into_iter()
+            .map(|value| match value {
+                Value::Integer(value) => Value::Float(value as f64),
+                value => value,
+            })
+            .collect())
+    } else {
+        Ok(vals)
+    }
+}
+
 fn pare_vector_rounding(vals: Vec<Value>) -> Result<(Value, Option<Value>), EvalError> {
     match vals.as_slice() {
         [Value::Bool(_)] | [Value::Bool(_), _] | [_, Value::Bool(_)] => Err(
@@ -902,6 +1029,201 @@ mod tests {
             Value::Integer(value) => Expression::Integer(value),
             Value::Float(value) => Expression::Float(value),
         }
+    }
+
+    #[test]
+    fn test_value_to_expression_bool() {
+        let result = value_to_expression(Value::Bool(true));
+
+        assert_eq!(result, Expression::Bool(true));
+    }
+
+    /************ Expression dispatch tests *************/
+
+    #[test]
+    fn test_eval_variable_known() {
+        let mut variables: HashMap<String, Value> = HashMap::new();
+        variables.insert("Test_Name".to_string(), Value::Integer(42));
+        let expr = Box::new(Expression::Variable("Test_Name"));
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(42)));
+    }
+
+    #[rstest]
+    #[case(Expression::Error)]
+    #[case(Expression::LexicalError(crate::tokens::LexicalError::InvalidToken))]
+    fn test_eval_invalid_expression(#[case] expr: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::InvalidExpression));
+    }
+
+    #[rstest]
+    #[case(Expression::Error)]
+    #[case(Expression::LexicalError(crate::tokens::LexicalError::InvalidToken))]
+    fn test_eval_function_argument_invalid_expression(#[case] argument: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::Function {
+            func: Func::Min,
+            arguments: vec![Expression::Integer(1), argument],
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::InvalidExpression));
+    }
+
+    /************ N-nary function tests *************/
+
+    #[rstest]
+    #[case(
+        Func::Min,
+        vec![Value::Integer(3), Value::Integer(-1), Value::Integer(2)],
+        Value::Integer(-1)
+    )]
+    #[case(
+        Func::Max,
+        vec![Value::Integer(3), Value::Integer(-1), Value::Integer(2)],
+        Value::Integer(3)
+    )]
+    #[case(
+        Func::Min,
+        vec![Value::Float(3.5), Value::Float(-1.25), Value::Float(2.0)],
+        Value::Float(-1.25)
+    )]
+    #[case(
+        Func::Max,
+        vec![Value::Float(3.5), Value::Float(-1.25), Value::Float(2.0)],
+        Value::Float(3.5)
+    )]
+    #[case(
+        Func::Min,
+        vec![Value::Integer(3), Value::Float(-1.25), Value::Integer(2)],
+        Value::Float(-1.25)
+    )]
+    #[case(
+        Func::Max,
+        vec![Value::Integer(3), Value::Float(-1.25), Value::Integer(2)],
+        Value::Float(3.0)
+    )]
+    #[case(Func::Min, vec![Value::Integer(3)], Value::Integer(3))]
+    #[case(Func::Max, vec![Value::Float(3.5)], Value::Float(3.5))]
+    fn test_eval_n_nary_function_regular(
+        #[case] func: Func,
+        #[case] arguments: Vec<Value>,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let arguments = arguments.into_iter().map(value_to_expression).collect();
+        let expr = Box::new(Expression::Function { func, arguments });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    fn test_apply_n_nary_function_empty_invalid_arity(#[case] func: Func) {
+        let result = apply_n_nary_function(&func, vec![]);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
+    }
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    fn test_apply_n_nary_function_invalid_type_from_validation(#[case] func: Func) {
+        let result = apply_n_nary_function(&func, vec![Value::Integer(1), Value::Bool(true)]);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "N-nary functions not defined for bool".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Func::Power)]
+    #[case(Func::Modulo)]
+    #[case(Func::Remainder)]
+    #[case(Func::Round)]
+    #[case(Func::Floor)]
+    #[case(Func::Ceiling)]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    fn test_apply_n_nary_function_unsupported_func(#[case] func: Func) {
+        let result = apply_n_nary_function(&func, vec![Value::Integer(1)]);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0)],
+        "Min expected all integer values"
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true)],
+        "Min expected all integer values"
+    )]
+    #[case(
+        vec![Value::Float(1.0), Value::Integer(2)],
+        "Min expected all float values"
+    )]
+    #[case(
+        vec![Value::Float(1.0), Value::Bool(true)],
+        "Min expected all float values"
+    )]
+    #[case(
+        vec![Value::Bool(true), Value::Integer(1)],
+        "N-nary functions not defined for bool"
+    )]
+    fn test_apply_min_function_invalid_type(#[case] vals: Vec<Value>, #[case] message: &str) {
+        let result = apply_min_function(vals);
+
+        assert_eq!(result, Err(EvalError::InvalidType(message.to_string())));
+    }
+
+    #[rstest]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0)],
+        "Max expected all integer values"
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true)],
+        "Max expected all integer values"
+    )]
+    #[case(
+        vec![Value::Float(1.0), Value::Integer(2)],
+        "Max expected all float values"
+    )]
+    #[case(
+        vec![Value::Float(1.0), Value::Bool(true)],
+        "Max expected all float values"
+    )]
+    #[case(
+        vec![Value::Bool(true), Value::Integer(1)],
+        "N-nary functions not defined for bool"
+    )]
+    fn test_apply_max_function_invalid_type(#[case] vals: Vec<Value>, #[case] message: &str) {
+        let result = apply_max_function(vals);
+
+        assert_eq!(result, Err(EvalError::InvalidType(message.to_string())));
     }
 
     /************ Unary operation tests *************/
@@ -2207,6 +2529,16 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_floor_f64_float_overflow() {
+        let result = floor_f64(f64::MAX, 0.5);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError("Float overflow on floor".to_string(),))
+        );
+    }
+
     #[rstest]
     #[case(Value::Bool(true), None)]
     #[case(Value::Bool(true), Some(Value::Integer(2)))]
@@ -2299,6 +2631,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_ceiling_f64_float_overflow() {
+        let result = ceiling_f64(f64::MAX, 0.5);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Float overflow on ceiling".to_string(),
+            ))
+        );
+    }
+
     #[rstest]
     #[case(
         vec![Value::Integer(1), Value::Integer(2)],
@@ -2331,6 +2675,45 @@ mod tests {
         #[case] expected: Result<(Value, Value), EvalError>,
     ) {
         let result = pare_vector_binary(vals);
+
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(vec![], Ok(vec![]))]
+    #[case(
+        vec![Value::Integer(1)],
+        Ok(vec![Value::Integer(1)])
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)],
+        Ok(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)])
+    )]
+    #[case(
+        vec![Value::Float(1.5)],
+        Ok(vec![Value::Float(1.5)])
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.5), Value::Integer(3)],
+        Ok(vec![Value::Float(1.0), Value::Float(2.5), Value::Float(3.0)])
+    )]
+    #[case(
+        vec![Value::Bool(true)],
+        Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        ))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true), Value::Float(3.0)],
+        Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        ))
+    )]
+    fn test_pare_vector_n_nary(
+        #[case] vals: Vec<Value>,
+        #[case] expected: Result<Vec<Value>, EvalError>,
+    ) {
+        let result = pare_vector_n_nary(vals);
 
         assert_eq!(result, expected);
     }
