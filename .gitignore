@@ -75,6 +75,7 @@ docs/_build/
 # PyBuilder
 .pybuilder/
 target/
+mutants.out*
 
 # Jupyter Notebook
 .ipynb_checkpoints

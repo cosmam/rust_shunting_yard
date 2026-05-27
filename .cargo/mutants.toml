@@ -1,0 +1,7 @@
+# Mutation-testing scope for the standalone shunting-yard expression evaluator.
+
+gitignore = true
+test_package = ["shunting_yard"]
+examine_globs = [
+    "src/**/*.rs",
+]
