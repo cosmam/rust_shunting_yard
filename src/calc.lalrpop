@@ -1,0 +1,328 @@
+use crate::tokens::{Token, LexicalError};
+use crate::ast;
+
+use lalrpop_util::ErrorRecovery;
+
+grammar<'input, 'err>(errors: &'err mut Vec<ErrorRecovery<usize, Token<'input>, LexicalError>>);
+
+extern {
+    type Location = usize;
+    type Error = LexicalError;
+
+    enum Token<'input> {
+        "error" => Token::Error(<LexicalError>),
+        "boolean" => Token::Bool(<bool>),
+        "integer literal" => Token::Integer(<i64>),
+        "hex literal" => Token::Hexadecimal(<i64>),
+        "float literal" => Token::Float(<f64>),
+        "variable" => Token::Variable(<&'input str>),
+        "==" => Token::Equals,
+        "!=" => Token::NotEquals,
+        "<=" => Token::LessThanEquals,
+        ">=" => Token::GreaterThanEquals,
+        "~=" => Token::ApproximatelyEquals,
+        "+" => Token::Plus,
+        "-" => Token::Minus,
+        "**" => Token::Exponentiation,
+        "*" => Token::Multiply,
+        "/" => Token::Divide,
+        "^" => Token::BitwiseXor,
+        "%" => Token::Modulo,
+        "&&" => Token::LogicalAnd,
+        "||" => Token::LogicalOr,
+        "<<" => Token::BitshiftLeft,
+        ">>" => Token::BitshiftRight,
+        "°" => Token::Degrees,
+        "!" => Token::LogicalNot,
+        "~" => Token::BitwiseNot,
+        "min" => Token::Minimum,
+        "max" => Token::Maximum,
+        "pow" => Token::Power,
+        "mod" => Token::Mod,
+        "rem" => Token::Remainder,
+        "round" => Token::Round,
+        "acos" => Token::ACos,
+        "asin" => Token::ASin,
+        "atan" => Token::ATan,
+        "abs" => Token::AbsoluteValue,
+        "ln" => Token::NaturalLog,
+        "log" => Token::Log,
+        "exp" => Token::Euler,
+        "floor" => Token::Floor,
+        "ceiling" => Token::Ceiling,
+        "&" => Token::BitwiseAnd,
+        "|" => Token::BitwiseOr,
+        "cos" => Token::Cos,
+        "sin" => Token::Sin,
+        "tan" => Token::Tan,
+        "<" => Token::LessThan,
+        ">" => Token::GreaterThan,
+        "(" => Token::LeftParen,
+        ")" => Token::RightParen,
+        "," => Token::Comma,
+    }
+}
+
+pub Expression: Box<ast::Expression<'input>> = {
+    #[precedence(level="1")]
+    Term,
+
+    #[precedence(level="13")] #[assoc(side="left")]
+    <lhs:Expression> "==" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::Equals,
+        rhs
+        })
+    },
+    #[precedence(level="13")] #[assoc(side="left")]
+    <lhs:Expression> "!=" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::NotEquals,
+        rhs
+        })
+    },
+    #[precedence(level="7")] #[assoc(side="left")]
+    <lhs:Expression> "<=" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::LessThanEquals,
+        rhs
+        })
+    },
+    #[precedence(level="7")] #[assoc(side="left")]
+    <lhs:Expression> ">=" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::GreaterThanEquals,
+        rhs
+        })
+    },
+    #[precedence(level="13")] #[assoc(side="left")]
+    <lhs:Expression> "~=" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::ApproximatelyEquals,
+        rhs
+        })
+    },
+    #[precedence(level="3")] #[assoc(side="right")]
+    <lhs:Expression> "**" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::Power,
+        rhs
+        })
+    },
+    #[precedence(level="5")] #[assoc(side="left")]
+    <lhs:Expression> "+" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::Plus,
+        rhs
+        })
+    },
+    #[precedence(level="5")] #[assoc(side="left")]
+    <lhs:Expression> "-" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::Minus,
+        rhs
+        })
+    },
+    #[precedence(level="4")] #[assoc(side="left")]
+    <lhs:Expression> "*" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::Multiply,
+        rhs
+        })
+    },
+    #[precedence(level="4")] #[assoc(side="left")]
+    <lhs:Expression> "/" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::Divide,
+        rhs
+        })
+    },
+    #[precedence(level="4")] #[assoc(side="left")]
+    <lhs:Expression> "%" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::Modulo,
+        rhs
+        })
+    },
+    #[precedence(level="11")] #[assoc(side="left")]
+    <lhs:Expression> "&&" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::LogicalAnd,
+        rhs
+        })
+    },
+    #[precedence(level="12")] #[assoc(side="left")]
+    <lhs:Expression> "||" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::LogicalOr,
+        rhs
+        })
+    },
+    #[precedence(level="6")] #[assoc(side="left")]
+    <lhs:Expression> "<<" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::BitshiftLeft,
+        rhs
+        })
+    },
+    #[precedence(level="6")] #[assoc(side="left")]
+    <lhs:Expression> ">>" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::BitshiftRight,
+        rhs
+        })
+    },
+    #[precedence(level="7")] #[assoc(side="left")]
+    <lhs:Expression> "<" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::LessThan,
+        rhs
+        })
+    },
+    #[precedence(level="7")] #[assoc(side="left")]
+    <lhs:Expression> ">" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::GreaterThan,
+        rhs
+        })
+    },
+    #[precedence(level="2")] #[assoc(side="left")]
+    <lhs:Expression> "°" => {
+        Box::new(ast::Expression::UnaryOperation {
+        value: lhs,
+        operator: ast::Opcode::Degrees
+        })
+    },
+    #[precedence(level="3")] #[assoc(side="right")]
+    "!" <rhs:Expression> => {
+        Box::new(ast::Expression::UnaryOperation {
+        value: rhs,
+        operator: ast::Opcode::LogicalNot
+        })
+    },
+    #[precedence(level="3")] #[assoc(side="right")]
+    "+" <rhs:Expression> => {
+        Box::new(ast::Expression::UnaryOperation {
+        value: rhs,
+        operator: ast::Opcode::Plus
+        })
+    },
+    #[precedence(level="3")] #[assoc(side="right")]
+    "-" <rhs:Expression> => {
+        Box::new(ast::Expression::UnaryOperation {
+        value: rhs,
+        operator: ast::Opcode::Minus
+        })
+    },
+    #[precedence(level="3")] #[assoc(side="right")]
+    "~" <rhs:Expression> => {
+        Box::new(ast::Expression::UnaryOperation {
+        value: rhs,
+        operator: ast::Opcode::BitwiseNot
+        })
+    },
+    #[precedence(level="8")] #[assoc(side="left")]
+    <lhs:Expression> "&" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::BitwiseAnd,
+        rhs
+        })
+    },
+    #[precedence(level="9")] #[assoc(side="left")]
+    <lhs:Expression> "^" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::BitwiseXor,
+        rhs
+        })
+    },
+    #[precedence(level="10")] #[assoc(side="left")]
+    <lhs:Expression> "|" <rhs:Expression> => {
+        Box::new(ast::Expression::BinaryOperation {
+        lhs,
+        operator: ast::Opcode::BitwiseOr,
+        rhs
+        })
+    },
+}
+
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => { v.push(e); v }
+    }
+};
+
+FunctionName: ast::Func = {
+    "min" => ast::Func::Min,
+    "max" => ast::Func::Max,
+    "pow" => ast::Func::Power,
+    "mod" => ast::Func::Modulo,
+    "rem" => ast::Func::Remainder,
+    "round" => ast::Func::Round,
+    "cos" => ast::Func::Cos,
+    "sin" => ast::Func::Sin,
+    "tan" => ast::Func::Tan,
+    "acos" => ast::Func::ACos,
+    "asin" => ast::Func::ASin,
+    "atan" => ast::Func::ATan,
+    "abs" => ast::Func::Abs,
+    "ln" => ast::Func::Ln,
+    "log" => ast::Func::Log,
+    "exp" => ast::Func::Exp,
+    "floor" => ast::Func::Floor,
+    "ceiling" => ast::Func::Ceiling,
+};
+
+FunctionCall: Box<ast::Expression<'input>> = {
+    <func:FunctionName> "(" <arguments:ExpressionList> ")" => {
+        Box::new(ast::Expression::Function {
+        func,
+        arguments: arguments.into_iter().map(|arg| *arg).collect()
+        })
+    },
+};
+
+pub Term: Box<ast::Expression<'input>> = {
+    <val:"boolean"> => {
+        Box::new(ast::Expression::Bool(val))
+    },
+    <val:"integer literal"> => {
+        Box::new(ast::Expression::Integer(val))
+    },
+    <val:"hex literal"> => {
+        Box::new(ast::Expression::Integer(val))
+    },
+    <val:"float literal"> => {
+        Box::new(ast::Expression::Float(val))
+    },
+    <val:"variable"> => {
+        Box::new(ast::Expression::Variable(val))
+    },
+    "(" <Expression> ")",
+    FunctionCall,
+    <err:"error"> => {
+        Box::new(ast::Expression::LexicalError(err))
+    },
+    ! => { errors.push(<>); Box::new(ast::Expression::Error) },
+}
+
+pub ExpressionList = Comma<Expression>;

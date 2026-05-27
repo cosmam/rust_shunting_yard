@@ -1,0 +1,3021 @@
+//! Evaluation for parsed expressions.
+//!
+//! # Overview
+//!
+//! This module evaluates an [`Expression`] tree into a runtime [`Value`]. Literal
+//! values evaluate directly, variables are resolved from a caller-provided
+//! binding map, and compound expressions are evaluated recursively before their
+//! operators or functions are applied.
+//!
+//! # Errors
+//!
+//! Evaluation returns [`EvalError`] when an expression cannot be evaluated, a
+//! referenced variable is missing, or an operator is used with the wrong arity.
+
+use crate::ast::{Expression, Func, Opcode};
+use crate::{EvalError, Value};
+use roundable::{Roundable, Tie};
+use std::collections::HashMap;
+
+const EPSILON: f64 = 0.000001;
+
+/// Evaluate an expression into a runtime value.
+///
+/// `expr` is evaluated recursively. Literal expression nodes become their
+/// corresponding [`Value`] variants, variable nodes are looked up in
+/// `variables`, and compound nodes delegate to the appropriate unary, binary, or
+/// function evaluator after their child expressions have been evaluated.
+///
+/// # Errors
+///
+/// Returns [`EvalError::UnknownVariable`] when `expr` references a variable that
+/// is not present in `variables`.
+///
+/// Returns [`EvalError::InvalidExpression`] when `expr` contains an
+/// [`Expression::Error`] or [`Expression::LexicalError`] node.
+///
+/// Returns [`EvalError::InvalidArity`] when a unary or binary operator is used
+/// in a position where that operator is not supported. The grammar should prevent
+/// this, so this is mostly a defensive programming decision
+pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Value, EvalError> {
+    match expr {
+        Expression::Bool(n) => Ok(Value::Bool(*n)),
+        Expression::Integer(n) => Ok(Value::Integer(*n)),
+        Expression::Float(n) => Ok(Value::Float(*n)),
+
+        Expression::UnaryOperation { operator, value } => {
+            let value = eval(value, variables)?;
+            apply_unary(operator, value)
+        }
+
+        Expression::BinaryOperation { lhs, operator, rhs } => {
+            let left = eval(lhs, variables)?;
+            let right = eval(rhs, variables)?;
+            apply_binary(operator, left, right)
+        }
+
+        Expression::Function { func, arguments } => {
+            let values = arguments
+                .iter()
+                .map(|v| eval(v, variables))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            apply_function(func, values)
+        }
+
+        Expression::Variable(name) => {
+            if let Some(value) = variables.get(*name) {
+                Ok(value.clone())
+            } else {
+                Err(EvalError::UnknownVariable(name.to_string()))
+            }
+        }
+
+        Expression::Error | Expression::LexicalError(_) => Err(EvalError::InvalidExpression),
+    }
+}
+
+/************** Unary operations **************/
+
+/// Apply a unary operator to one evaluated value.
+///
+/// Dispatches unary plus, minus, degrees, bitwise not, and logical not to the
+/// helper that implements that unary operator family.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidArity`] when a binary-only opcode is supplied.
+/// Errors from the selected unary helper are returned unchanged.
+fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
+    match op {
+        Opcode::Degrees | Opcode::Plus | Opcode::Minus => apply_unary_math(op, val),
+        Opcode::BitwiseNot => apply_bitwise_not(val),
+        Opcode::LogicalNot => apply_logical_not(val),
+        Opcode::Equals
+        | Opcode::NotEquals
+        | Opcode::LessThan
+        | Opcode::GreaterThan
+        | Opcode::GreaterThanEquals
+        | Opcode::LessThanEquals
+        | Opcode::ApproximatelyEquals
+        | Opcode::Power
+        | Opcode::Multiply
+        | Opcode::Divide
+        | Opcode::Modulo
+        | Opcode::BitshiftLeft
+        | Opcode::BitshiftRight
+        | Opcode::BitwiseAnd
+        | Opcode::BitwiseOr
+        | Opcode::BitwiseXor
+        | Opcode::LogicalAnd
+        | Opcode::LogicalOr => Err(EvalError::InvalidArity),
+    }
+}
+
+/// Apply a unary arithmetic operator.
+///
+/// Unary plus returns the operand unchanged, unary minus negates integers and
+/// floats, and degrees converts integer or floating-point degree values into
+/// floating-point radians.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] for boolean operands. Returns
+/// [`EvalError::UnexpectedOpcode`] for any opcode other than unary plus, unary
+/// minus, or degrees. The unexpected-opcode branch is unreachable through
+/// [`apply_unary`], which only routes unary math opcodes here.
+fn apply_unary_math(op: &Opcode, val: Value) -> Result<Value, EvalError> {
+    match (op, val.clone()) {
+        (_, Value::Bool(_)) => Err(EvalError::InvalidType(
+            "Unary math operations not defined for bool".to_string(),
+        )),
+        (Opcode::Plus, _) => Ok(val),
+        (Opcode::Minus, Value::Integer(i)) => Ok(Value::Integer(-i)),
+        (Opcode::Minus, Value::Float(f)) => Ok(Value::Float(-f)),
+        (Opcode::Degrees, Value::Integer(i)) => Ok(Value::Float((i as f64).to_radians())),
+        (Opcode::Degrees, Value::Float(f)) => Ok(Value::Float(f.to_radians())),
+        (_, _) => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
+/// Apply bitwise negation to a value.
+///
+/// Boolean values are negated with logical not, since Rust booleans are only
+/// `true` or `false`. Integer values are negated with Rust's bitwise `!`.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] for floating-point operands.
+fn apply_bitwise_not(val: Value) -> Result<Value, EvalError> {
+    match val {
+        // rust guarantees bools are only 0 or 1, so BitwiseNot is the same as LogicalNot
+        Value::Bool(v) => Ok(Value::Bool(!v)),
+        // the '!' operator in rust for ints represents bitwise negation
+        Value::Integer(i) => Ok(Value::Integer(!i)),
+        Value::Float(_) => Err(EvalError::InvalidType(
+            "Bitwise operations not defined for floats".to_string(),
+        )),
+    }
+}
+
+/// Apply logical negation to a value.
+///
+/// Boolean values are negated with Rust's logical `!`.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] for integer and floating-point operands.
+fn apply_logical_not(val: Value) -> Result<Value, EvalError> {
+    match val {
+        Value::Bool(v) => Ok(Value::Bool(!v)),
+        Value::Integer(_) | Value::Float(_) => Err(EvalError::InvalidType(
+            "Logical operations must be bools".to_string(),
+        )),
+    }
+}
+
+/************** Binary operations **************/
+
+/// Apply a binary operator to two evaluated values.
+///
+/// Dispatches comparison, arithmetic, bitwise, bitshift, and boolean operators
+/// to the helper that implements that operator family.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidArity`] when a unary-only opcode is supplied.
+/// Errors from the selected operator-family helper are returned unchanged.
+fn apply_binary(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match op {
+        Opcode::Equals
+        | Opcode::NotEquals
+        | Opcode::LessThan
+        | Opcode::GreaterThan
+        | Opcode::GreaterThanEquals
+        | Opcode::LessThanEquals
+        | Opcode::ApproximatelyEquals => apply_binary_comparison(op, lhs, rhs),
+        Opcode::Power
+        | Opcode::Multiply
+        | Opcode::Divide
+        | Opcode::Plus
+        | Opcode::Minus
+        | Opcode::Modulo => apply_binary_math_operation(op, lhs, rhs),
+        Opcode::BitwiseAnd | Opcode::BitwiseOr | Opcode::BitwiseXor => {
+            apply_binary_bit_operation(op, lhs, rhs)
+        }
+        Opcode::BitshiftLeft | Opcode::BitshiftRight => apply_bitshift_operation(op, lhs, rhs),
+        Opcode::LogicalAnd | Opcode::LogicalOr => apply_binary_logical_operation(op, lhs, rhs),
+        Opcode::Degrees | Opcode::BitwiseNot | Opcode::LogicalNot => Err(EvalError::InvalidArity),
+    }
+}
+
+/// Apply a binary comparison operator.
+///
+/// Integer and float pairs are promoted to floats before comparison. Boolean
+/// pairs support equality and ordering using Rust's boolean ordering.
+///
+/// # Errors
+///
+/// Returns [`EvalError::UnexpectedOpcode`] when `op` is not a supported
+/// comparison operator; that branch is unreachable through [`apply_binary`],
+/// which only routes comparison opcodes here. Returns [`EvalError::InvalidType`]
+/// when the operands are not the same type after integer/float promotion.
+#[rustfmt::skip]
+fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match convert_binary_values(op, lhs, rhs) {
+        (Opcode::Power, _, _)
+        | (Opcode::Multiply, _, _)
+        | (Opcode::Divide, _, _)
+        | (Opcode::Plus, _, _)
+        | (Opcode::Minus, _, _)
+        | (Opcode::Modulo, _, _)
+        | (Opcode::BitshiftLeft, _, _)
+        | (Opcode::BitshiftRight, _, _)
+        | (Opcode::LogicalAnd, _, _)
+        | (Opcode::LogicalOr, _, _)
+        | (Opcode::LogicalNot, _, _)
+        | (Opcode::BitwiseNot, _, _)
+        | (Opcode::BitwiseAnd, _, _)
+        | (Opcode::BitwiseOr, _, _)
+        | (Opcode::BitwiseXor, _, _)
+        | (Opcode::Degrees, _, _) => Err(EvalError::UnexpectedOpcode),
+        (Opcode::Equals, Value::Bool(l), Value::Bool(r)) |
+        (Opcode::ApproximatelyEquals, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l == r))
+        }
+        (Opcode::NotEquals, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l != r))
+        }
+        (Opcode::GreaterThan, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l & !r))
+        }
+        (Opcode::GreaterThanEquals, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l >= r))
+        }
+        (Opcode::LessThan, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(!l & r))
+        }
+        (Opcode::LessThanEquals, Value::Bool(l), Value::Bool(r)) => {
+            Ok(Value::Bool(l <= r))
+        }
+        (Opcode::Equals, Value::Integer(l), Value::Integer(r)) |
+        (Opcode::ApproximatelyEquals, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l == r))
+        }
+        (Opcode::NotEquals, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l != r))
+        }
+        (Opcode::GreaterThan, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l > r))
+        }
+        (Opcode::GreaterThanEquals, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l >= r))
+        }
+        (Opcode::LessThan, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l < r))
+        }
+        (Opcode::LessThanEquals, Value::Integer(l), Value::Integer(r)) => {
+            Ok(Value::Bool(l <= r))
+        }
+        (Opcode::Equals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l == r))
+        }
+        (Opcode::NotEquals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l != r))
+        }
+        (Opcode::GreaterThan, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l > r))
+        }
+        (Opcode::GreaterThanEquals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l >= r))
+        }
+        (Opcode::LessThan, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l < r))
+        }
+        (Opcode::LessThanEquals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool(l <= r))
+        }
+        (Opcode::ApproximatelyEquals, Value::Float(l), Value::Float(r)) => {
+            Ok(Value::Bool((l - r).abs() < (l.max(r) * EPSILON)))
+        }
+        _ => Err(EvalError::InvalidType(
+            "Cannot mix types for binary comparison".to_string(),
+        )),
+    }
+}
+
+/// Promote mixed integer/float binary operands to floats.
+///
+/// Values that are already the same type are returned unchanged. Boolean values
+/// are left untouched so the caller can decide whether they are valid for the
+/// operation family.
+fn convert_binary_values(op: &Opcode, lhs: Value, rhs: Value) -> (&Opcode, Value, Value) {
+    match (lhs.clone(), rhs.clone()) {
+        (Value::Integer(i), Value::Float(f)) => (op, Value::Float(i as f64), Value::Float(f)),
+        (Value::Float(f), Value::Integer(i)) => (op, Value::Float(f), Value::Float(i as f64)),
+        _ => (op, lhs, rhs),
+    }
+}
+
+/// Apply a binary arithmetic operator.
+///
+/// Supports power, multiplication, division, addition, subtraction, and modulo
+/// for integer pairs and floating-point pairs. Mixed integer/float inputs are
+/// promoted to floats before dispatch.
+///
+/// # Errors
+///
+/// Returns [`EvalError::UnexpectedOpcode`] for non-arithmetic operators.
+/// That branch is unreachable through [`apply_binary`], which only routes
+/// arithmetic opcodes here. Returns [`EvalError::InvalidType`] for boolean
+/// operands. Returns [`EvalError::MathError`] for integer power overflow,
+/// integer exponent conversion failure, division by zero, or modulo by zero.
+fn apply_binary_math_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    // Most arithmetic currently follows Rust's primitive operators; integer power is the
+    // only checked overflow case here.
+    match convert_binary_values(op, lhs, rhs) {
+        (Opcode::Equals, _, _)
+        | (Opcode::NotEquals, _, _)
+        | (Opcode::LessThanEquals, _, _)
+        | (Opcode::GreaterThanEquals, _, _)
+        | (Opcode::ApproximatelyEquals, _, _)
+        | (Opcode::LessThan, _, _)
+        | (Opcode::GreaterThan, _, _)
+        | (Opcode::BitshiftLeft, _, _)
+        | (Opcode::BitshiftRight, _, _)
+        | (Opcode::LogicalAnd, _, _)
+        | (Opcode::LogicalOr, _, _)
+        | (Opcode::LogicalNot, _, _)
+        | (Opcode::BitwiseNot, _, _)
+        | (Opcode::BitwiseAnd, _, _)
+        | (Opcode::BitwiseOr, _, _)
+        | (Opcode::BitwiseXor, _, _)
+        | (Opcode::Degrees, _, _) => Err(EvalError::UnexpectedOpcode),
+        (Opcode::Power, Value::Integer(l), Value::Integer(r)) => {
+            let result: Result<u32, _> = r.try_into();
+            match result {
+                Ok(val) => match l.checked_pow(val) {
+                    Some(v) => Ok(Value::Integer(v)),
+                    None => Err(EvalError::MathError(
+                        "Integer overflow on power".to_string(),
+                    )),
+                },
+                Err(_) => Err(EvalError::MathError(
+                    "Integer exponent too large".to_string(),
+                )),
+            }
+        }
+        (Opcode::Divide, Value::Integer(l), Value::Integer(r)) => match r {
+            0 => Err(EvalError::MathError("Division by zero".to_string())),
+            _ => Ok(Value::Integer(l / r)),
+        },
+        (Opcode::Modulo, Value::Integer(l), Value::Integer(r)) => match r {
+            0 => Err(EvalError::MathError("Modulo by zero".to_string())),
+            _ => Ok(Value::Integer(l % r)),
+        },
+        (Opcode::Multiply, Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l * r)),
+        (Opcode::Plus, Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l + r)),
+        (Opcode::Minus, Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l - r)),
+        (Opcode::Power, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.powf(r))),
+        (Opcode::Divide, Value::Float(l), Value::Float(r)) => match r {
+            0.0 => Err(EvalError::MathError("Division by zero".to_string())),
+            _ => Ok(Value::Float(l / r)),
+        },
+        (Opcode::Modulo, Value::Float(l), Value::Float(r)) => match r {
+            0.0 => Err(EvalError::MathError("Modulo by zero".to_string())),
+            _ => Ok(Value::Float(l % r)),
+        },
+        (Opcode::Multiply, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l * r)),
+        (Opcode::Plus, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l + r)),
+        (Opcode::Minus, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l - r)),
+        // we already ensured there's no mixture of int and float, and handled other operators,
+        // so the only other option is that one of the values is a bool
+        _ => Err(EvalError::InvalidType(
+            "Bools not supported for binary math".to_string(),
+        )),
+    }
+}
+
+/// Apply a binary bitwise operator.
+///
+/// Supports bitwise and, or, and xor for pairs of booleans or pairs of signed
+/// integers. Boolean operands use Rust's boolean bit operators, and integer
+/// operands use Rust's integer bit operators.
+///
+/// # Errors
+///
+/// Returns [`EvalError::UnexpectedOpcode`] if `op` is not a bitwise binary
+/// opcode; that branch is unreachable through [`apply_binary`], which only
+/// routes bitwise binary opcodes here. Returns [`EvalError::InvalidType`] for
+/// any float operand, and [`EvalError::InvalidType`] when the operands are
+/// otherwise not the same supported type.
+fn apply_binary_bit_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match (op, lhs, rhs) {
+        (Opcode::Equals, _, _)
+        | (Opcode::NotEquals, _, _)
+        | (Opcode::LessThanEquals, _, _)
+        | (Opcode::GreaterThanEquals, _, _)
+        | (Opcode::ApproximatelyEquals, _, _)
+        | (Opcode::LessThan, _, _)
+        | (Opcode::GreaterThan, _, _)
+        | (Opcode::Power, _, _)
+        | (Opcode::Multiply, _, _)
+        | (Opcode::Divide, _, _)
+        | (Opcode::Plus, _, _)
+        | (Opcode::Minus, _, _)
+        | (Opcode::Modulo, _, _)
+        | (Opcode::BitshiftLeft, _, _)
+        | (Opcode::BitshiftRight, _, _)
+        | (Opcode::LogicalAnd, _, _)
+        | (Opcode::LogicalOr, _, _)
+        | (Opcode::LogicalNot, _, _)
+        | (Opcode::BitwiseNot, _, _)
+        | (Opcode::Degrees, _, _) => Err(EvalError::UnexpectedOpcode),
+        (_, Value::Float(_), _) | (_, _, Value::Float(_)) => Err(EvalError::InvalidType(
+            "Bitwise operations on floats not supported".to_string(),
+        )),
+        (Opcode::BitwiseAnd, Value::Bool(b_lhs), Value::Bool(b_rhs)) => {
+            Ok(Value::Bool(b_lhs & b_rhs))
+        }
+        (Opcode::BitwiseOr, Value::Bool(b_lhs), Value::Bool(b_rhs)) => {
+            Ok(Value::Bool(b_lhs | b_rhs))
+        }
+        (Opcode::BitwiseXor, Value::Bool(b_lhs), Value::Bool(b_rhs)) => {
+            Ok(Value::Bool(b_lhs ^ b_rhs))
+        }
+        (Opcode::BitwiseAnd, Value::Integer(i_lhs), Value::Integer(i_rhs)) => {
+            Ok(Value::Integer(i_lhs & i_rhs))
+        }
+        (Opcode::BitwiseOr, Value::Integer(i_lhs), Value::Integer(i_rhs)) => {
+            Ok(Value::Integer(i_lhs | i_rhs))
+        }
+        (Opcode::BitwiseXor, Value::Integer(i_lhs), Value::Integer(i_rhs)) => {
+            Ok(Value::Integer(i_lhs ^ i_rhs))
+        }
+        (Opcode::BitwiseAnd, _, _) | (Opcode::BitwiseOr, _, _) | (Opcode::BitwiseXor, _, _) => Err(
+            EvalError::InvalidType("Cannot mix types for bitwise operations".to_string()),
+        ),
+    }
+}
+
+/// Apply a bitshift operator.
+///
+/// Shifts an integer left or right by an integer amount using Rust's `<<` and
+/// `>>` operators.
+///
+/// # Errors
+///
+/// Returns [`EvalError::UnexpectedOpcode`] if both operands are integers but
+/// `op` is not a bitshift opcode; that branch is unreachable through
+/// [`apply_binary`], which only routes bitshift opcodes here. Returns
+/// [`EvalError::InvalidType`] if either operand is not an integer.
+fn apply_bitshift_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    if let (Value::Integer(l), Value::Integer(r)) = (lhs, rhs) {
+        match op {
+            Opcode::BitshiftLeft => Ok(Value::Integer(l << r)),
+            Opcode::BitshiftRight => Ok(Value::Integer(l >> r)),
+            _ => Err(EvalError::UnexpectedOpcode),
+        }
+    } else {
+        Err(EvalError::InvalidType(
+            "Logical operations must operate on bools".to_string(),
+        ))
+    }
+}
+
+/// Apply a binary logical operator.
+///
+/// Supports boolean `&&` and `||` for pairs of boolean values.
+///
+/// # Errors
+///
+/// Returns [`EvalError::UnexpectedOpcode`] if both operands are booleans but
+/// `op` is not a logical binary opcode; that branch is unreachable through
+/// [`apply_binary`], which only routes logical binary opcodes here. Returns
+/// [`EvalError::InvalidType`] if either operand is not a boolean.
+fn apply_binary_logical_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    if let (Value::Bool(l), Value::Bool(r)) = (lhs, rhs) {
+        match op {
+            Opcode::LogicalAnd => Ok(Value::Bool(l && r)),
+            Opcode::LogicalOr => Ok(Value::Bool(l || r)),
+            _ => Err(EvalError::UnexpectedOpcode),
+        }
+    } else {
+        Err(EvalError::InvalidType(
+            "Logical operations must operate on bools".to_string(),
+        ))
+    }
+}
+
+/************** Functions operations **************/
+
+/// Apply a built-in function to evaluated argument values.
+///
+/// Dispatches each [`Func`] to the helper that implements that function's arity
+/// and type rules.
+///
+/// # Errors
+///
+/// Returns any validation or math error produced by the selected function
+/// family. The parser should only construct supported function opcodes, but the
+/// lower-level helpers still use [`EvalError::UnexpectedOpcode`] defensively
+/// when called directly with a function from the wrong family.
+fn apply_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
+    match func {
+        Func::Min | Func::Max => apply_n_nary_function(func, vals),
+        Func::Round | Func::Floor | Func::Ceiling => apply_rounding_function(func, vals),
+        Func::Power | Func::Modulo | Func::Remainder => apply_binary_function(func, vals),
+        Func::Cos
+        | Func::Sin
+        | Func::Tan
+        | Func::ACos
+        | Func::ASin
+        | Func::ATan
+        | Func::Abs
+        | Func::Ln
+        | Func::Log
+        | Func::Exp => apply_unary_function(func, vals),
+    }
+}
+
+/// Apply an n-nary numeric function such as min or max.
+///
+/// The input vector is first normalized by [`pare_vector_n_nary`], so normal
+/// calls either contain all integers or all floats.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] when validation sees a boolean argument.
+/// Returns [`EvalError::InvalidArity`] for min/max with no arguments. Returns
+/// [`EvalError::UnexpectedOpcode`] when called directly with a function outside
+/// the n-nary family; that branch is unreachable through [`apply_function`].
+fn apply_n_nary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
+    let vals = pare_vector_n_nary(vals)?;
+
+    match func {
+        Func::Min => apply_min_function(vals),
+        Func::Max => apply_max_function(vals),
+        Func::Power
+        | Func::Modulo
+        | Func::Remainder
+        | Func::Round
+        | Func::Floor
+        | Func::Ceiling
+        | Func::Cos
+        | Func::Sin
+        | Func::Tan
+        | Func::ACos
+        | Func::ASin
+        | Func::ATan
+        | Func::Abs
+        | Func::Ln
+        | Func::Log
+        | Func::Exp => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
+/// Validate and normalize arguments for n-nary numeric functions.
+///
+/// Any number of arguments is accepted. If any argument is a float, all integer
+/// arguments are promoted to floats so downstream min/max logic can operate on a
+/// homogeneous vector.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] when any argument is a boolean.
+fn pare_vector_n_nary(vals: Vec<Value>) -> Result<Vec<Value>, EvalError> {
+    if vals.iter().any(|value| matches!(value, Value::Bool(_))) {
+        return Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        ));
+    }
+
+    if vals.iter().any(|value| matches!(value, Value::Float(_))) {
+        Ok(vals
+            .into_iter()
+            .map(|value| match value {
+                Value::Integer(value) => Value::Float(value as f64),
+                value => value,
+            })
+            .collect())
+    } else {
+        Ok(vals)
+    }
+}
+
+/// Return the minimum value from a normalized numeric vector.
+///
+/// Integer inputs produce an integer result and float inputs produce a float
+/// result. Through [`apply_n_nary_function`], the vector has already been
+/// validated and normalized to a single numeric type.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidArity`] for an empty vector. Returns
+/// [`EvalError::InvalidType`] for booleans or mixed numeric types; those branches
+/// are defensive and should be unreachable unless this helper is called directly
+/// without first calling [`pare_vector_n_nary`].
+fn apply_min_function(vals: Vec<Value>) -> Result<Value, EvalError> {
+    match vals.as_slice() {
+        [] => Err(EvalError::InvalidArity),
+        [Value::Integer(_), ..] => {
+            let mut min = None;
+            for value in vals {
+                match value {
+                    Value::Integer(value) => {
+                        min = Some(min.map_or(value, |min: i64| min.min(value)))
+                    }
+                    // apply_n_nary_function calls pare_vector_n_nary first, so this
+                    // branch is only reachable if apply_min_function is called directly.
+                    Value::Bool(_) | Value::Float(_) => {
+                        return Err(EvalError::InvalidType(
+                            "Min expected all integer values".to_string(),
+                        ));
+                    }
+                }
+            }
+            min.map(Value::Integer).ok_or(EvalError::InvalidArity)
+        }
+        [Value::Float(_), ..] => {
+            let mut min = None;
+            for value in vals {
+                match value {
+                    Value::Float(value) => min = Some(min.map_or(value, |min: f64| min.min(value))),
+                    // apply_n_nary_function calls pare_vector_n_nary first, so this
+                    // branch is only reachable if apply_min_function is called directly.
+                    Value::Bool(_) | Value::Integer(_) => {
+                        return Err(EvalError::InvalidType(
+                            "Min expected all float values".to_string(),
+                        ));
+                    }
+                }
+            }
+            min.map(Value::Float).ok_or(EvalError::InvalidArity)
+        }
+        [Value::Bool(_), ..] => Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        )),
+    }
+}
+
+/// Return the maximum value from a normalized numeric vector.
+///
+/// Integer inputs produce an integer result and float inputs produce a float
+/// result. Through [`apply_n_nary_function`], the vector has already been
+/// validated and normalized to a single numeric type.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidArity`] for an empty vector. Returns
+/// [`EvalError::InvalidType`] for booleans or mixed numeric types; those branches
+/// are defensive and should be unreachable unless this helper is called directly
+/// without first calling [`pare_vector_n_nary`].
+fn apply_max_function(vals: Vec<Value>) -> Result<Value, EvalError> {
+    match vals.as_slice() {
+        [] => Err(EvalError::InvalidArity),
+        [Value::Integer(_), ..] => {
+            let mut max = None;
+            for value in vals {
+                match value {
+                    Value::Integer(value) => {
+                        max = Some(max.map_or(value, |max: i64| max.max(value)))
+                    }
+                    // apply_n_nary_function calls pare_vector_n_nary first, so this
+                    // branch is only reachable if apply_max_function is called directly.
+                    Value::Bool(_) | Value::Float(_) => {
+                        return Err(EvalError::InvalidType(
+                            "Max expected all integer values".to_string(),
+                        ));
+                    }
+                }
+            }
+            max.map(Value::Integer).ok_or(EvalError::InvalidArity)
+        }
+        [Value::Float(_), ..] => {
+            let mut max = None;
+            for value in vals {
+                match value {
+                    Value::Float(value) => max = Some(max.map_or(value, |max: f64| max.max(value))),
+                    // apply_n_nary_function calls pare_vector_n_nary first, so this
+                    // branch is only reachable if apply_max_function is called directly.
+                    Value::Bool(_) | Value::Integer(_) => {
+                        return Err(EvalError::InvalidType(
+                            "Max expected all float values".to_string(),
+                        ));
+                    }
+                }
+            }
+            max.map(Value::Float).ok_or(EvalError::InvalidArity)
+        }
+        [Value::Bool(_), ..] => Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        )),
+    }
+}
+
+/// Apply a rounding-family function.
+///
+/// Handles `round`, `floor`, and `ceiling` after validating that the argument
+/// list contains one numeric value and an optional numeric precision.
+///
+/// # Errors
+///
+/// Returns validation errors from [`pare_vector_rounding`], math/type errors
+/// from the selected rounding helper, or [`EvalError::UnexpectedOpcode`] when
+/// called directly with a function outside the rounding family. The
+/// unexpected-opcode branch is unreachable through [`apply_function`].
+fn apply_rounding_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
+    let (value, precision) = pare_vector_rounding(vals)?;
+
+    match func {
+        Func::Round => apply_round_function(value, precision),
+        Func::Floor => apply_floor_function(value, precision),
+        Func::Ceiling => apply_ceiling_function(value, precision),
+        Func::Min
+        | Func::Max
+        | Func::Power
+        | Func::Modulo
+        | Func::Remainder
+        | Func::Cos
+        | Func::Sin
+        | Func::Tan
+        | Func::ACos
+        | Func::ASin
+        | Func::ATan
+        | Func::Abs
+        | Func::Ln
+        | Func::Log
+        | Func::Exp => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
+/// Validate arguments for rounding-family functions.
+///
+/// Rounding functions accept one numeric value and an optional numeric precision.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] when either argument is a boolean. Returns
+/// [`EvalError::InvalidArity`] when the argument count is not one or two.
+fn pare_vector_rounding(vals: Vec<Value>) -> Result<(Value, Option<Value>), EvalError> {
+    match vals.as_slice() {
+        [Value::Bool(_)] | [Value::Bool(_), _] | [_, Value::Bool(_)] => Err(
+            EvalError::InvalidType("Rounding functions not defined for bool".to_string()),
+        ),
+        [value] => Ok((value.clone(), None)),
+        [value, precision] => Ok((value.clone(), Some(precision.clone()))),
+        _ => Err(EvalError::InvalidArity),
+    }
+}
+
+/// Apply round-to-precision semantics to a value.
+///
+/// Integer values with no precision or integer precision return integers. Float
+/// values with integer precision return integers; any float precision returns a
+/// float.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] for boolean inputs. Returns
+/// [`EvalError::MathError`] for non-positive precision or overflow from the
+/// numeric rounding helper.
+fn apply_round_function(value: Value, precision: Option<Value>) -> Result<Value, EvalError> {
+    match (value, precision) {
+        (Value::Integer(value), None) => round_i64(value, 1).map(Value::Integer),
+        (Value::Float(value), None) => round_f64(value, 1.0).map(Value::Float),
+        (Value::Integer(value), Some(Value::Integer(precision))) => {
+            round_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Integer(value), Some(Value::Float(precision))) => {
+            round_f64(value as f64, precision).map(Value::Float)
+        }
+        (Value::Float(value), Some(Value::Integer(precision))) => {
+            round_f64_to_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Float(value), Some(Value::Float(precision))) => {
+            round_f64(value, precision).map(Value::Float)
+        }
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for round functions".to_string(),
+        )),
+    }
+}
+
+/// Round an integer to the nearest positive integer precision.
+///
+/// Ties are rounded upward according to [`Tie::Up`].
+///
+/// # Errors
+///
+/// Returns [`EvalError::MathError`] when precision is non-positive or the
+/// rounded integer would overflow.
+fn round_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
+    if precision <= 0 {
+        return Err(EvalError::MathError(
+            "Round precision must be positive".to_string(),
+        ));
+    }
+
+    value
+        .try_round_to(precision, Tie::Up)
+        .ok_or_else(|| EvalError::MathError("Integer overflow on round".to_string()))
+}
+
+/// Round a float to the nearest positive floating-point precision.
+///
+/// Ties are rounded upward according to [`Tie::Up`].
+///
+/// # Errors
+///
+/// Returns [`EvalError::MathError`] when precision is non-positive or the
+/// rounding operation cannot produce a finite float.
+fn round_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
+    if precision <= 0.0 {
+        return Err(EvalError::MathError(
+            "Round precision must be positive".to_string(),
+        ));
+    }
+
+    value
+        .try_round_to(precision, Tie::Up)
+        .ok_or_else(|| EvalError::MathError("Float overflow on round".to_string()))
+}
+
+/// Round a float and convert the result to an integer.
+///
+/// # Errors
+///
+/// Returns errors from [`round_f64`]. Returns [`EvalError::MathError`] if the
+/// rounded value falls outside the `i64` range.
+fn round_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
+    let rounded = round_f64(value, precision as f64)?;
+
+    if rounded < i64::MIN as f64 || rounded > i64::MAX as f64 {
+        return Err(EvalError::MathError(
+            "Integer overflow on round".to_string(),
+        ));
+    }
+
+    Ok(rounded as i64)
+}
+
+/// Apply floor-to-precision semantics to a value.
+///
+/// Integer values with no precision or integer precision return integers. Float
+/// values with integer precision return integers; any float precision returns a
+/// float.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] for boolean inputs. Returns
+/// [`EvalError::MathError`] for non-positive precision or overflow from the
+/// numeric floor helper.
+fn apply_floor_function(value: Value, precision: Option<Value>) -> Result<Value, EvalError> {
+    match (value, precision) {
+        (Value::Integer(value), None) => floor_i64(value, 1).map(Value::Integer),
+        (Value::Float(value), None) => floor_f64(value, 1.0).map(Value::Float),
+        (Value::Integer(value), Some(Value::Integer(precision))) => {
+            floor_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Integer(value), Some(Value::Float(precision))) => {
+            floor_f64(value as f64, precision).map(Value::Float)
+        }
+        (Value::Float(value), Some(Value::Integer(precision))) => {
+            floor_f64_to_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Float(value), Some(Value::Float(precision))) => {
+            floor_f64(value, precision).map(Value::Float)
+        }
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for floor functions".to_string(),
+        )),
+    }
+}
+
+/// Floor an integer to a positive integer precision.
+///
+/// Uses Euclidean division so negative numbers floor toward negative infinity
+/// relative to the requested precision.
+///
+/// # Errors
+///
+/// Returns [`EvalError::MathError`] when precision is non-positive or the
+/// resulting integer multiple would overflow.
+fn floor_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
+    if precision <= 0 {
+        return Err(EvalError::MathError(
+            "Floor precision must be positive".to_string(),
+        ));
+    }
+
+    value
+        .div_euclid(precision)
+        .checked_mul(precision)
+        .ok_or_else(|| EvalError::MathError("Integer overflow on floor".to_string()))
+}
+
+/// Floor a float to a positive floating-point precision.
+///
+/// # Errors
+///
+/// Returns [`EvalError::MathError`] when precision is non-positive or the
+/// computed floor is not finite.
+fn floor_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
+    if precision <= 0.0 {
+        return Err(EvalError::MathError(
+            "Floor precision must be positive".to_string(),
+        ));
+    }
+
+    let result = (value / precision).floor() * precision;
+    if result.is_finite() {
+        Ok(result)
+    } else {
+        Err(EvalError::MathError("Float overflow on floor".to_string()))
+    }
+}
+
+/// Floor a float and convert the result to an integer.
+///
+/// # Errors
+///
+/// Returns errors from [`floor_f64`]. Returns [`EvalError::MathError`] if the
+/// floored value falls outside the `i64` range.
+fn floor_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
+    let floored = floor_f64(value, precision as f64)?;
+
+    if floored < i64::MIN as f64 || floored > i64::MAX as f64 {
+        return Err(EvalError::MathError(
+            "Integer overflow on floor".to_string(),
+        ));
+    }
+
+    Ok(floored as i64)
+}
+
+/// Apply ceiling-to-precision semantics to a value.
+///
+/// Integer values with no precision or integer precision return integers. Float
+/// values with integer precision return integers; any float precision returns a
+/// float.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] for boolean inputs. Returns
+/// [`EvalError::MathError`] for non-positive precision or overflow from the
+/// numeric ceiling helper.
+fn apply_ceiling_function(value: Value, precision: Option<Value>) -> Result<Value, EvalError> {
+    match (value, precision) {
+        (Value::Integer(value), None) => ceiling_i64(value, 1).map(Value::Integer),
+        (Value::Float(value), None) => ceiling_f64(value, 1.0).map(Value::Float),
+        (Value::Integer(value), Some(Value::Integer(precision))) => {
+            ceiling_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Integer(value), Some(Value::Float(precision))) => {
+            ceiling_f64(value as f64, precision).map(Value::Float)
+        }
+        (Value::Float(value), Some(Value::Integer(precision))) => {
+            ceiling_f64_to_i64(value, precision).map(Value::Integer)
+        }
+        (Value::Float(value), Some(Value::Float(precision))) => {
+            ceiling_f64(value, precision).map(Value::Float)
+        }
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for ceiling functions".to_string(),
+        )),
+    }
+}
+
+/// Ceiling an integer to a positive integer precision.
+///
+/// # Errors
+///
+/// Returns [`EvalError::MathError`] when precision is non-positive or adding the
+/// precision to the floored base would overflow.
+fn ceiling_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
+    if precision <= 0 {
+        return Err(EvalError::MathError(
+            "Ceiling precision must be positive".to_string(),
+        ));
+    }
+
+    let base = floor_i64(value, precision)?;
+    if base == value {
+        Ok(base)
+    } else {
+        base.checked_add(precision)
+            .ok_or_else(|| EvalError::MathError("Integer overflow on ceiling".to_string()))
+    }
+}
+
+/// Ceiling a float to a positive floating-point precision.
+///
+/// # Errors
+///
+/// Returns [`EvalError::MathError`] when precision is non-positive or the
+/// computed ceiling is not finite.
+fn ceiling_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
+    if precision <= 0.0 {
+        return Err(EvalError::MathError(
+            "Ceiling precision must be positive".to_string(),
+        ));
+    }
+
+    let result = (value / precision).ceil() * precision;
+    if result.is_finite() {
+        Ok(result)
+    } else {
+        Err(EvalError::MathError(
+            "Float overflow on ceiling".to_string(),
+        ))
+    }
+}
+
+/// Ceiling a float and convert the result to an integer.
+///
+/// # Errors
+///
+/// Returns errors from [`ceiling_f64`]. Returns [`EvalError::MathError`] if the
+/// ceiling value falls outside the `i64` range.
+fn ceiling_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
+    let ceiling = ceiling_f64(value, precision as f64)?;
+
+    if ceiling < i64::MIN as f64 || ceiling > i64::MAX as f64 {
+        return Err(EvalError::MathError(
+            "Integer overflow on ceiling".to_string(),
+        ));
+    }
+
+    Ok(ceiling as i64)
+}
+
+/// Apply a two-argument numeric function.
+///
+/// Handles power, modulo, and Euclidean remainder after validating that exactly
+/// two non-boolean arguments were supplied.
+///
+/// # Errors
+///
+/// Returns validation errors from [`pare_vector_binary`], math/type errors from
+/// the selected helper, or [`EvalError::UnexpectedOpcode`] when called directly
+/// with a function outside the binary-function family. The unexpected-opcode
+/// branch is unreachable through [`apply_function`].
+fn apply_binary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
+    let (lhs, rhs) = pare_vector_binary(vals)?;
+
+    match func {
+        Func::Power => apply_power_function(lhs, rhs),
+        Func::Modulo => apply_modulo_function(lhs, rhs),
+        Func::Remainder => apply_remainder_function(lhs, rhs),
+        Func::Min
+        | Func::Max
+        | Func::Round
+        | Func::Cos
+        | Func::Sin
+        | Func::Tan
+        | Func::ACos
+        | Func::ASin
+        | Func::ATan
+        | Func::Abs
+        | Func::Ln
+        | Func::Log
+        | Func::Exp
+        | Func::Floor
+        | Func::Ceiling => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
+/// Validate arguments for two-argument numeric functions.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidArity`] unless exactly two arguments are supplied.
+/// Returns [`EvalError::InvalidType`] when either argument is a boolean.
+fn pare_vector_binary(vals: Vec<Value>) -> Result<(Value, Value), EvalError> {
+    match vals.as_slice() {
+        [lhs, rhs] => match (lhs, rhs) {
+            (Value::Bool(_), _) | (_, Value::Bool(_)) => Err(EvalError::InvalidType(
+                "Binary functions not defined for bool".to_string(),
+            )),
+            _ => Ok((lhs.clone(), rhs.clone())),
+        },
+        _ => Err(EvalError::InvalidArity),
+    }
+}
+
+/// Apply exponentiation to two numeric values.
+///
+/// Integer bases with integer exponents use checked integer exponentiation.
+/// Mixed integer/float inputs are evaluated as floats.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] for boolean inputs. Returns
+/// [`EvalError::MathError`] when an integer exponent cannot convert to `u32` or
+/// checked integer exponentiation overflows.
+fn apply_power_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match (lhs, rhs) {
+        (Value::Integer(l), Value::Integer(r)) => {
+            let result: Result<u32, _> = r.try_into();
+            match result {
+                Ok(val) => match l.checked_pow(val) {
+                    Some(v) => Ok(Value::Integer(v)),
+                    None => Err(EvalError::MathError(
+                        "Integer overflow on power".to_string(),
+                    )),
+                },
+                Err(_) => Err(EvalError::MathError(
+                    "Integer exponent too large".to_string(),
+                )),
+            }
+        }
+        (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64).powf(r))),
+        (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l.powf(r as f64))),
+        (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.powf(r))),
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for power functions".to_string(),
+        )),
+    }
+}
+
+/// Apply Rust remainder (`%`) semantics to two numeric values.
+///
+/// Mixed integer/float inputs are evaluated as floats.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] for boolean inputs.
+fn apply_modulo_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match (lhs, rhs) {
+        (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l % r)),
+        (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64) % r)),
+        (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l % (r as f64))),
+        (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l % r)),
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for modulo functions".to_string(),
+        )),
+    }
+}
+
+/// Apply Euclidean remainder semantics to two numeric values.
+///
+/// Mixed integer/float inputs are evaluated as floats.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidType`] for boolean inputs.
+fn apply_remainder_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
+    match (lhs, rhs) {
+        (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l.rem_euclid(r))),
+        (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64).rem_euclid(r))),
+        (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l.rem_euclid(r as f64))),
+        (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.rem_euclid(r))),
+        _ => Err(EvalError::InvalidType(
+            "Bools not valid for power functions".to_string(),
+        )),
+    }
+}
+
+/// Apply a one-argument floating-point function.
+///
+/// Accepts integer or float arguments via [`pare_vector_unary`], which promotes
+/// integers to floats before dispatching to the selected math function.
+///
+/// # Errors
+///
+/// Returns validation errors from [`pare_vector_unary`] or
+/// [`EvalError::UnexpectedOpcode`] when called directly with a function outside
+/// the unary-function family. The unexpected-opcode branch is unreachable
+/// through [`apply_function`].
+fn apply_unary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalError> {
+    let value = pare_vector_unary(vals)?;
+
+    match func {
+        Func::Cos => apply_float_unary(value, f64::cos),
+        Func::Sin => apply_float_unary(value, f64::sin),
+        Func::Tan => apply_float_unary(value, f64::tan),
+        Func::ACos => apply_float_unary(value, f64::acos),
+        Func::ASin => apply_float_unary(value, f64::asin),
+        Func::ATan => apply_float_unary(value, f64::atan),
+        Func::Abs => apply_float_unary(value, f64::abs),
+        Func::Ln => apply_float_unary(value, f64::ln),
+        Func::Log => apply_float_unary(value, f64::log10),
+        Func::Exp => apply_float_unary(value, f64::exp),
+        Func::Min
+        | Func::Max
+        | Func::Power
+        | Func::Modulo
+        | Func::Remainder
+        | Func::Round
+        | Func::Floor
+        | Func::Ceiling => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
+/// Validate arguments for one-argument floating-point functions.
+///
+/// Integers are promoted to floats so unary math functions can operate on a
+/// homogeneous value type.
+///
+/// # Errors
+///
+/// Returns [`EvalError::InvalidArity`] unless exactly one argument is supplied.
+/// Returns [`EvalError::InvalidType`] when the argument is a boolean.
+fn pare_vector_unary(vals: Vec<Value>) -> Result<Value, EvalError> {
+    match vals.as_slice() {
+        [] | [_, _, ..] => Err(EvalError::InvalidArity),
+        [Value::Bool(_)] => Err(EvalError::InvalidType(
+            "Unary functions not defined for bool".to_string(),
+        )),
+        [Value::Integer(val)] => Ok(Value::Float(*val as f64)),
+        [Value::Float(val)] => Ok(Value::Float(*val)),
+    }
+}
+
+/// Apply a floating-point unary operation to a normalized value.
+///
+/// # Errors
+///
+/// Returns [`EvalError::UnexpectedOpcode`] for non-float inputs. That branch is
+/// defensive and should be unreachable through [`apply_unary_function`], because
+/// [`pare_vector_unary`] converts integers to floats and rejects booleans.
+fn apply_float_unary(val: Value, op: fn(f64) -> f64) -> Result<Value, EvalError> {
+    match val {
+        Value::Float(value) => Ok(Value::Float(op(value))),
+        Value::Bool(_) | Value::Integer(_) => Err(EvalError::UnexpectedOpcode),
+    }
+}
+
+// Some of the tests here are defensive programming; the AST will not
+// come out with a binary operator in a unary operation. But if that ever
+// changes in the future, as a whole or for a particular operator, this
+// will result in failing tests, which is what we want
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::*;
+
+    // in general, we'll test from the public eval function. The exceptions
+    // are redundant/defensive error handling, which we're testing as a way
+    // to catch regressions/changed assumptions
+
+    fn value_to_expression(value: Value) -> Expression<'static> {
+        match value {
+            Value::Bool(value) => Expression::Bool(value),
+            Value::Integer(value) => Expression::Integer(value),
+            Value::Float(value) => Expression::Float(value),
+        }
+    }
+
+    /************ Test helper tests *************/
+
+    #[test]
+    fn test_value_to_expression_bool() {
+        let result = value_to_expression(Value::Bool(true));
+
+        assert_eq!(result, Expression::Bool(true));
+    }
+
+    /************ Expression dispatch tests *************/
+
+    #[test]
+    fn test_eval_variable_known() {
+        let mut variables: HashMap<String, Value> = HashMap::new();
+        variables.insert("Test_Name".to_string(), Value::Integer(42));
+        let expr = Box::new(Expression::Variable("Test_Name"));
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(42)));
+    }
+
+    #[rstest]
+    #[case(Expression::Error)]
+    #[case(Expression::LexicalError(crate::tokens::LexicalError::InvalidToken))]
+    fn test_eval_invalid_expression(#[case] expr: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::InvalidExpression));
+    }
+
+    #[rstest]
+    #[case(Expression::Error)]
+    #[case(Expression::LexicalError(crate::tokens::LexicalError::InvalidToken))]
+    fn test_eval_function_argument_invalid_expression(#[case] argument: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::Function {
+            func: Func::Min,
+            arguments: vec![Expression::Integer(1), argument],
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::InvalidExpression));
+    }
+
+    /************ Unary operation tests *************/
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    fn test_apply_unary_invalid_arity(#[case] op: Opcode) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: op,
+            value: Box::new(Expression::Integer(1)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
+    }
+
+    #[test]
+    fn test_unary_eval_variable_unknown() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Degrees,
+            value: Box::new(Expression::Variable("Test_Name")),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("Test_Name".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_unary_plus_int() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Plus,
+            value: Box::new(Expression::Integer(3)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(3)));
+    }
+
+    #[test]
+    fn test_unary_minus_int() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Minus,
+            value: Box::new(Expression::Integer(3)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(-3)));
+    }
+
+    #[test]
+    fn test_unary_degrees_int() {
+        let v: i64 = 3;
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Degrees,
+            value: Box::new(Expression::Integer(v)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Float((v as f64).to_radians())));
+    }
+
+    #[test]
+    fn test_unary_plus_float() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Plus,
+            value: Box::new(Expression::Float(3.7)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Float(3.7)));
+    }
+
+    #[test]
+    fn test_unary_minus_float() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Minus,
+            value: Box::new(Expression::Float(3.7)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Float(-3.7)));
+    }
+
+    #[test]
+    fn test_unary_degrees_float() {
+        let v: f64 = 52.0;
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::Degrees,
+            value: Box::new(Expression::Float(v)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Float(v.to_radians())));
+    }
+
+    #[rstest]
+    #[case(Opcode::Degrees)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    fn test_unary_math_bool(#[case] op: Opcode) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: op,
+            value: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Unary math operations not defined for bool".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    fn test_unary_math_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_unary_math(&op, Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[test]
+    fn test_bitwise_not_bool() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::BitwiseNot,
+            value: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_bitwise_not_int() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::BitwiseNot,
+            value: Box::new(Expression::Integer(467)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(-468)));
+    }
+
+    #[test]
+    fn test_bitwise_not_float() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::BitwiseNot,
+            value: Box::new(Expression::Float(1.0)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bitwise operations not defined for floats".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_logical_not_bool() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::LogicalNot,
+            value: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Bool(false)));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1))]
+    #[case(Expression::Float(1.0))]
+    fn test_logical_not_invalid(#[case] val: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::UnaryOperation {
+            operator: Opcode::LogicalNot,
+            value: Box::new(val),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Logical operations must be bools".to_string(),
+            ))
+        );
+    }
+
+    /************ Binary operation tests *************/
+
+    #[rstest]
+    #[case(Opcode::Degrees)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    fn test_apply_binary_invalid_arity(#[case] op: Opcode) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(true)),
+            operator: op,
+            rhs: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
+    }
+
+    #[test]
+    fn test_binary_eval_variable_unknown_lhs() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Variable("Test_Name")),
+            operator: Opcode::LogicalOr,
+            rhs: Box::new(Expression::Bool(true)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("Test_Name".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_binary_eval_variable_unknown_rhs() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(true)),
+            operator: Opcode::LogicalOr,
+            rhs: Box::new(Expression::Variable("Test_Name")),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("Test_Name".to_string()))
+        );
+    }
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Opcode::Equals, Expression::Integer(1), Expression::Integer(1), Value::Bool(true))]
+    #[case(Opcode::Equals, Expression::Integer(1), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::Equals, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
+    #[case(Opcode::Equals, Expression::Float(1.0), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::NotEquals, Expression::Integer(1), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::NotEquals, Expression::Integer(1), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::NotEquals, Expression::Float(1.0), Expression::Integer(1), Value::Bool(false))]
+    #[case(Opcode::NotEquals, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Integer(1), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Integer(1), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Float(2.0), Expression::Integer(1), Value::Bool(false))]
+    #[case(Opcode::LessThan, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThanEquals, Expression::Integer(2), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::LessThanEquals, Expression::Integer(2), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThanEquals, Expression::Float(2.0), Expression::Integer(1), Value::Bool(false))]
+    #[case(Opcode::LessThanEquals, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Integer(1), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
+    #[case(Opcode::GreaterThan, Expression::Float(2.0), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThanEquals, Expression::Integer(2), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::GreaterThanEquals, Expression::Integer(2), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThanEquals, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
+    #[case(Opcode::GreaterThanEquals, Expression::Float(2.0), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Integer(1), Expression::Integer(1), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Integer(1), Expression::Integer(2), Value::Bool(false))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Integer(1000), Expression::Float(1000.0005), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Float(1000.002), Expression::Integer(1000), Value::Bool(false))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Float(1000.0), Expression::Float(1000.0005), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Float(1000.0), Expression::Float(1000.002), Value::Bool(false))]
+    #[case(Opcode::Equals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::NotEquals, Expression::Bool(true), Expression::Bool(false), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Bool(false), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::LessThanEquals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Bool(true), Expression::Bool(false), Value::Bool(true))]
+    #[case(Opcode::GreaterThanEquals, Expression::Bool(false), Expression::Bool(false), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::ApproximatelyEquals, Expression::Bool(true), Expression::Bool(false), Value::Bool(false))]
+    fn test_apply_binary_comparison_regular(
+        #[case] op: Opcode,
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: op,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    #[case(Expression::Float(1.0), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Float(1.0))]
+    fn test_apply_binary_comparison_operation_invalid_types(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::Equals,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Cannot mix types for binary comparison".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_comparison_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_comparison(&op, Value::Integer(1), Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Opcode::Plus, Expression::Integer(10), Expression::Integer(4), Value::Integer(14))]
+    #[case(Opcode::Plus, Expression::Integer(10), Expression::Float(0.4), Value::Float(10.4))]
+    #[case(Opcode::Plus, Expression::Float(1.0), Expression::Integer(4), Value::Float(5.0))]
+    #[case(Opcode::Plus, Expression::Float(1.0), Expression::Float(0.4), Value::Float(1.4))]
+    #[case(Opcode::Minus, Expression::Integer(10), Expression::Integer(4), Value::Integer(6))]
+    #[case(Opcode::Minus, Expression::Integer(10), Expression::Float(0.5), Value::Float(9.5))]
+    #[case(Opcode::Minus, Expression::Float(10.5), Expression::Integer(4), Value::Float(6.5))]
+    #[case(Opcode::Minus, Expression::Float(10.5), Expression::Float(0.5), Value::Float(10.0))]
+    #[case(Opcode::Multiply, Expression::Integer(10), Expression::Integer(4), Value::Integer(40))]
+    #[case(Opcode::Multiply, Expression::Integer(10), Expression::Float(0.5), Value::Float(5.0))]
+    #[case(Opcode::Multiply, Expression::Float(10.5), Expression::Integer(4), Value::Float(42.0))]
+    #[case(Opcode::Multiply, Expression::Float(10.5), Expression::Float(0.5), Value::Float(5.25))]
+    #[case(Opcode::Divide, Expression::Integer(12), Expression::Integer(3), Value::Integer(4))]
+    #[case(Opcode::Divide, Expression::Integer(12), Expression::Float(3.0), Value::Float(4.0))]
+    #[case(Opcode::Divide, Expression::Float(12.0), Expression::Integer(3), Value::Float(4.0))]
+    #[case(Opcode::Divide, Expression::Float(12.0), Expression::Float(3.0), Value::Float(4.0))]
+    #[case(Opcode::Modulo, Expression::Integer(13), Expression::Integer(5), Value::Integer(3))]
+    #[case(Opcode::Modulo, Expression::Integer(13), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Opcode::Modulo, Expression::Float(13.0), Expression::Integer(5), Value::Float(3.0))]
+    #[case(Opcode::Modulo, Expression::Float(13.0), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Opcode::Power, Expression::Integer(2), Expression::Integer(3), Value::Integer(8))]
+    #[case(Opcode::Power, Expression::Integer(2), Expression::Float(3.0), Value::Float(8.0))]
+    #[case(Opcode::Power, Expression::Float(2.0), Expression::Integer(3), Value::Float(8.0))]
+    #[case(Opcode::Power, Expression::Float(2.0), Expression::Float(3.0), Value::Float(8.0))]
+    fn test_apply_binary_math_regular(
+        #[case] op: Opcode,
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: op,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[test]
+    fn test_apply_binary_math_integer_exponent() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Integer(10)),
+            operator: Opcode::Power,
+            rhs: Box::new(Expression::Integer(5_000_000_000)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer exponent too large".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_binary_math_integer_overflow() {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Integer(1_000_000_000)),
+            operator: Opcode::Power,
+            rhs: Box::new(Expression::Integer(1_000_000_000)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on power".to_string()
+            ))
+        );
+    }
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Expression::Integer(10), Expression::Integer(0))]
+    #[case(Expression::Float(10.0), Expression::Integer(0))]
+    #[case(Expression::Integer(10), Expression::Float(0.0))]
+    #[case(Expression::Float(10.0), Expression::Float(0.0))]
+    fn test_apply_binary_math_divide_error(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::Divide,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::MathError("Division by zero".to_string())));
+    }
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Expression::Integer(10), Expression::Integer(0))]
+    #[case(Expression::Float(10.0), Expression::Integer(0))]
+    #[case(Expression::Integer(10), Expression::Float(0.0))]
+    #[case(Expression::Float(10.0), Expression::Float(0.0))]
+    fn test_apply_binary_math_modulo_error(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode:: Modulo,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(EvalError::MathError("Modulo by zero".to_string())));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Bool(true))]
+    #[case(Expression::Float(1.0), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    #[case(Expression::Bool(true), Expression::Float(1.0))]
+    fn test_apply_binary_math_operation_invalid_typoes(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::Multiply,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not supported for binary math".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_math_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_math_operation(&op, Value::Integer(1), Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(Opcode::BitwiseAnd, true, true, true)]
+    #[case(Opcode::BitwiseAnd, true, false, false)]
+    #[case(Opcode::BitwiseAnd, false, false, false)]
+    #[case(Opcode::BitwiseOr, true, true, true)]
+    #[case(Opcode::BitwiseOr, true, false, true)]
+    #[case(Opcode::BitwiseOr, false, false, false)]
+    #[case(Opcode::BitwiseXor, true, true, false)]
+    #[case(Opcode::BitwiseXor, true, false, true)]
+    #[case(Opcode::BitwiseXor, false, false, false)]
+    fn test_binary_bit_operations_bool(
+        #[case] op: Opcode,
+        #[case] lhs: bool,
+        #[case] rhs: bool,
+        #[case] expected: bool,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(lhs)),
+            operator: op,
+            rhs: Box::new(Expression::Bool(rhs)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Bool(expected)));
+    }
+
+    #[rstest]
+    #[case(Opcode::BitwiseAnd, 54, 19, 18)]
+    #[case(Opcode::BitwiseAnd, 54, 145, 16)]
+    #[case(Opcode::BitwiseAnd, 108, 19, 0)]
+    #[case(Opcode::BitwiseAnd, 108, 145, 0)]
+    #[case(Opcode::BitwiseOr, 54, 19, 55)]
+    #[case(Opcode::BitwiseOr, 54, 145, 183)]
+    #[case(Opcode::BitwiseOr, 108, 19, 127)]
+    #[case(Opcode::BitwiseOr, 108, 145, 253)]
+    #[case(Opcode::BitwiseXor, 54, 19, 37)]
+    #[case(Opcode::BitwiseXor, 54, 145, 167)]
+    #[case(Opcode::BitwiseXor, 108, 19, 127)]
+    #[case(Opcode::BitwiseXor, 108, 145, 253)]
+    fn test_binary_bit_operations_int(
+        #[case] op: Opcode,
+        #[case] lhs: i64,
+        #[case] rhs: i64,
+        #[case] expected: i64,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Integer(lhs)),
+            operator: op,
+            rhs: Box::new(Expression::Integer(rhs)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(expected)));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Float(1.0))]
+    #[case(Expression::Float(1.0), Expression::Integer(1))]
+    #[case(Expression::Float(1.0), Expression::Float(1.0))]
+    fn test_apply_binary_bit_operation_invalid_float(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::BitwiseAnd,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bitwise operations on floats not supported".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    fn test_apply_binary_bit_operation_invalid_mixed_types(
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::BitwiseAnd,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Cannot mix types for bitwise operations".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalAnd)]
+    #[case(Opcode::LogicalOr)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_bit_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_bit_operation(&op, Value::Integer(1), Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(Opcode::BitshiftLeft, 8055371489994718882, 11, 6011609612845125632)]
+    #[case(Opcode::BitshiftLeft, -1821376069820021562, 26, 8453234592348897280)]
+    #[case(Opcode::BitshiftLeft, 3897635188866812215, 28, -2591961689800835072)]
+    #[case(Opcode::BitshiftLeft, -7693944058662696389, 7, -7147403602218902144)]
+    #[case(Opcode::BitshiftRight, 7629495294638887680, 11, 3725339499335394)]
+    #[case(Opcode::BitshiftRight, -5773960239512220022, 26, -86038712256)]
+    #[case(Opcode::BitshiftRight, 2841882122645057328, 28, 10586835900)]
+    #[case(Opcode::BitshiftRight, -3171532055615339402, 7, -24777594184494840)]
+    fn test_binary_bitshift_valid(
+        #[case] op: Opcode,
+        #[case] lhs: i64,
+        #[case] rhs: i64,
+        #[case] expected: i64,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Integer(lhs)),
+            operator: op,
+            rhs: Box::new(Expression::Integer(rhs)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Integer(expected)));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Float(1.0))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    #[case(Expression::Bool(true), Expression::Float(1.0))]
+    fn test_binary_bitshift_invalid_types(#[case] lhs: Expression, #[case] rhs: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::BitshiftLeft,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Logical operations must operate on bools".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_bitshift_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_bitshift_operation(&op, Value::Integer(1), Value::Integer(1));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(Opcode::LogicalAnd, true, true, true)]
+    #[case(Opcode::LogicalAnd, true, false, false)]
+    #[case(Opcode::LogicalAnd, false, false, false)]
+    #[case(Opcode::LogicalOr, true, true, true)]
+    #[case(Opcode::LogicalOr, true, false, true)]
+    #[case(Opcode::LogicalOr, false, false, false)]
+    fn test_binary_boolean_algebra_valid(
+        #[case] op: Opcode,
+        #[case] lhs: bool,
+        #[case] rhs: bool,
+        #[case] expected: bool,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(Expression::Bool(lhs)),
+            operator: op,
+            rhs: Box::new(Expression::Bool(rhs)),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(Value::Bool(expected)));
+    }
+
+    #[rstest]
+    #[case(Expression::Integer(1), Expression::Bool(true))]
+    #[case(Expression::Bool(true), Expression::Integer(1))]
+    #[case(Expression::Integer(1), Expression::Integer(1))]
+    fn test_binary_boolean_algebra_invalid_types(#[case] lhs: Expression, #[case] rhs: Expression) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::BinaryOperation {
+            lhs: Box::new(lhs),
+            operator: Opcode::LogicalOr,
+            rhs: Box::new(rhs),
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Logical operations must operate on bools".to_string()
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Opcode::Equals)]
+    #[case(Opcode::NotEquals)]
+    #[case(Opcode::LessThanEquals)]
+    #[case(Opcode::GreaterThanEquals)]
+    #[case(Opcode::ApproximatelyEquals)]
+    #[case(Opcode::LessThan)]
+    #[case(Opcode::GreaterThan)]
+    #[case(Opcode::Power)]
+    #[case(Opcode::Multiply)]
+    #[case(Opcode::Divide)]
+    #[case(Opcode::Plus)]
+    #[case(Opcode::Minus)]
+    #[case(Opcode::Modulo)]
+    #[case(Opcode::BitshiftLeft)]
+    #[case(Opcode::BitshiftRight)]
+    #[case(Opcode::LogicalNot)]
+    #[case(Opcode::BitwiseNot)]
+    #[case(Opcode::BitwiseAnd)]
+    #[case(Opcode::BitwiseOr)]
+    #[case(Opcode::BitwiseXor)]
+    #[case(Opcode::Degrees)]
+    fn test_apply_binary_logical_operation_invalid_opcode(#[case] op: Opcode) {
+        let result = apply_binary_logical_operation(&op, Value::Bool(true), Value::Bool(true));
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    /************ N-nary function tests *************/
+
+    #[rstest]
+    #[case(
+        Func::Min,
+        vec![Value::Integer(3), Value::Integer(-1), Value::Integer(2)],
+        Value::Integer(-1)
+    )]
+    #[case(
+        Func::Max,
+        vec![Value::Integer(3), Value::Integer(-1), Value::Integer(2)],
+        Value::Integer(3)
+    )]
+    #[case(
+        Func::Min,
+        vec![Value::Float(3.5), Value::Float(-1.25), Value::Float(2.0)],
+        Value::Float(-1.25)
+    )]
+    #[case(
+        Func::Max,
+        vec![Value::Float(3.5), Value::Float(-1.25), Value::Float(2.0)],
+        Value::Float(3.5)
+    )]
+    #[case(
+        Func::Min,
+        vec![Value::Integer(3), Value::Float(-1.25), Value::Integer(2)],
+        Value::Float(-1.25)
+    )]
+    #[case(
+        Func::Max,
+        vec![Value::Integer(3), Value::Float(-1.25), Value::Integer(2)],
+        Value::Float(3.0)
+    )]
+    #[case(Func::Min, vec![Value::Integer(3)], Value::Integer(3))]
+    #[case(Func::Max, vec![Value::Float(3.5)], Value::Float(3.5))]
+    fn test_eval_n_nary_function_regular(
+        #[case] func: Func,
+        #[case] arguments: Vec<Value>,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let arguments = arguments.into_iter().map(value_to_expression).collect();
+        let expr = Box::new(Expression::Function { func, arguments });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    fn test_apply_n_nary_function_empty_invalid_arity(#[case] func: Func) {
+        let result = apply_n_nary_function(&func, vec![]);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
+    }
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    fn test_apply_n_nary_function_invalid_type_from_validation(#[case] func: Func) {
+        let result = apply_n_nary_function(&func, vec![Value::Integer(1), Value::Bool(true)]);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "N-nary functions not defined for bool".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Func::Power)]
+    #[case(Func::Modulo)]
+    #[case(Func::Remainder)]
+    #[case(Func::Round)]
+    #[case(Func::Floor)]
+    #[case(Func::Ceiling)]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    fn test_apply_n_nary_function_unsupported_func(#[case] func: Func) {
+        let result = apply_n_nary_function(&func, vec![Value::Integer(1)]);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(vec![], Ok(vec![]))]
+    #[case(
+        vec![Value::Integer(1)],
+        Ok(vec![Value::Integer(1)])
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)],
+        Ok(vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)])
+    )]
+    #[case(
+        vec![Value::Float(1.5)],
+        Ok(vec![Value::Float(1.5)])
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.5), Value::Integer(3)],
+        Ok(vec![Value::Float(1.0), Value::Float(2.5), Value::Float(3.0)])
+    )]
+    #[case(
+        vec![Value::Bool(true)],
+        Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        ))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true), Value::Float(3.0)],
+        Err(EvalError::InvalidType(
+            "N-nary functions not defined for bool".to_string(),
+        ))
+    )]
+    fn test_pare_vector_n_nary(
+        #[case] vals: Vec<Value>,
+        #[case] expected: Result<Vec<Value>, EvalError>,
+    ) {
+        let result = pare_vector_n_nary(vals);
+
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0)],
+        "Min expected all integer values"
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true)],
+        "Min expected all integer values"
+    )]
+    #[case(
+        vec![Value::Float(1.0), Value::Integer(2)],
+        "Min expected all float values"
+    )]
+    #[case(
+        vec![Value::Float(1.0), Value::Bool(true)],
+        "Min expected all float values"
+    )]
+    #[case(
+        vec![Value::Bool(true), Value::Integer(1)],
+        "N-nary functions not defined for bool"
+    )]
+    fn test_apply_min_function_invalid_type(#[case] vals: Vec<Value>, #[case] message: &str) {
+        let result = apply_min_function(vals);
+
+        assert_eq!(result, Err(EvalError::InvalidType(message.to_string())));
+    }
+
+    #[rstest]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0)],
+        "Max expected all integer values"
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true)],
+        "Max expected all integer values"
+    )]
+    #[case(
+        vec![Value::Float(1.0), Value::Integer(2)],
+        "Max expected all float values"
+    )]
+    #[case(
+        vec![Value::Float(1.0), Value::Bool(true)],
+        "Max expected all float values"
+    )]
+    #[case(
+        vec![Value::Bool(true), Value::Integer(1)],
+        "N-nary functions not defined for bool"
+    )]
+    fn test_apply_max_function_invalid_type(#[case] vals: Vec<Value>, #[case] message: &str) {
+        let result = apply_max_function(vals);
+
+        assert_eq!(result, Err(EvalError::InvalidType(message.to_string())));
+    }
+
+    /************ Rounding function tests *************/
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    #[case(Func::Power)]
+    #[case(Func::Modulo)]
+    #[case(Func::Remainder)]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    fn test_apply_rounding_function_unsupported_func(#[case] func: Func) {
+        let result = apply_rounding_function(&func, vec![Value::Integer(1)]);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(
+        vec![Value::Integer(1)],
+        Ok((Value::Integer(1), None))
+    )]
+    #[case(
+        vec![Value::Float(1.5)],
+        Ok((Value::Float(1.5), None))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Integer(2)],
+        Ok((Value::Integer(1), Some(Value::Integer(2))))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.5)],
+        Ok((Value::Integer(1), Some(Value::Float(2.5))))
+    )]
+    #[case(
+        vec![Value::Float(1.5), Value::Integer(2)],
+        Ok((Value::Float(1.5), Some(Value::Integer(2))))
+    )]
+    #[case(
+        vec![Value::Float(1.5), Value::Float(2.5)],
+        Ok((Value::Float(1.5), Some(Value::Float(2.5))))
+    )]
+    #[case(vec![], Err(EvalError::InvalidArity))]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0), Value::Float(3.0)],
+        Err(EvalError::InvalidArity)
+    )]
+    #[case(
+        vec![Value::Bool(true)],
+        Err(EvalError::InvalidType(
+            "Rounding functions not defined for bool".to_string(),
+        ))
+    )]
+    #[case(
+        vec![Value::Bool(true), Value::Float(2.0)],
+        Err(EvalError::InvalidType(
+            "Rounding functions not defined for bool".to_string(),
+        ))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true)],
+        Err(EvalError::InvalidType(
+            "Rounding functions not defined for bool".to_string(),
+        ))
+    )]
+    fn test_pare_vector_rounding(
+        #[case] vals: Vec<Value>,
+        #[case] expected: Result<(Value, Option<Value>), EvalError>,
+    ) {
+        let result = pare_vector_rounding(vals);
+
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), None, Value::Integer(314))]
+    #[case(Value::Float(314.1), None, Value::Float(314.0))]
+    #[case(Value::Integer(314), Some(Value::Integer(10)), Value::Integer(310))]
+    #[case(Value::Integer(314), Some(Value::Float(100.0)), Value::Float(300.0))]
+    #[case(Value::Float(314.1), Some(Value::Integer(10)), Value::Integer(310))]
+    #[case(Value::Float(314.1), Some(Value::Float(100.0)), Value::Float(300.0))]
+    fn test_eval_round_function_regular(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let mut arguments = vec![value_to_expression(value)];
+        if let Some(precision) = precision {
+            arguments.push(value_to_expression(precision));
+        }
+        let expr = Box::new(Expression::Function {
+            func: Func::Round,
+            arguments,
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), Some(Value::Integer(0)))]
+    #[case(Value::Integer(314), Some(Value::Float(0.0)))]
+    #[case(Value::Float(314.1), Some(Value::Integer(0)))]
+    #[case(Value::Float(314.1), Some(Value::Float(0.0)))]
+    #[case(Value::Integer(314), Some(Value::Integer(-10)))]
+    #[case(Value::Float(314.1), Some(Value::Float(-10.0)))]
+    fn test_apply_round_function_non_positive_precision(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_round_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Round precision must be positive".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_round_function_float_to_integer_overflow() {
+        let result = apply_round_function(Value::Float(f64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on round".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_round_function_integer_overflow() {
+        let result = apply_round_function(Value::Integer(i64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on round".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), None)]
+    #[case(Value::Bool(true), Some(Value::Integer(2)))]
+    #[case(Value::Bool(true), Some(Value::Float(2.0)))]
+    #[case(Value::Integer(2), Some(Value::Bool(true)))]
+    #[case(Value::Float(2.0), Some(Value::Bool(true)))]
+    fn test_apply_round_function_bool_invalid_type(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_round_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for round functions".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), None, Value::Integer(314))]
+    #[case(Value::Float(314.9), None, Value::Float(314.0))]
+    #[case(Value::Integer(314), Some(Value::Integer(10)), Value::Integer(310))]
+    #[case(Value::Integer(314), Some(Value::Float(100.0)), Value::Float(300.0))]
+    #[case(Value::Float(314.9), Some(Value::Integer(10)), Value::Integer(310))]
+    #[case(Value::Float(314.9), Some(Value::Float(100.0)), Value::Float(300.0))]
+    fn test_eval_floor_function_regular(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let mut arguments = vec![value_to_expression(value)];
+        if let Some(precision) = precision {
+            arguments.push(value_to_expression(precision));
+        }
+        let expr = Box::new(Expression::Function {
+            func: Func::Floor,
+            arguments,
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), None)]
+    #[case(Value::Bool(true), Some(Value::Integer(2)))]
+    #[case(Value::Bool(true), Some(Value::Float(2.0)))]
+    #[case(Value::Integer(2), Some(Value::Bool(true)))]
+    #[case(Value::Float(2.0), Some(Value::Bool(true)))]
+    fn test_apply_floor_function_bool_invalid_type(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_floor_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for floor functions".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), Some(Value::Integer(0)))]
+    #[case(Value::Integer(314), Some(Value::Float(0.0)))]
+    #[case(Value::Float(314.1), Some(Value::Integer(0)))]
+    #[case(Value::Float(314.1), Some(Value::Float(0.0)))]
+    #[case(Value::Integer(314), Some(Value::Integer(-10)))]
+    #[case(Value::Float(314.1), Some(Value::Float(-10.0)))]
+    fn test_apply_floor_function_non_positive_precision(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_floor_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Floor precision must be positive".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_floor_function_float_to_integer_overflow() {
+        let result = apply_floor_function(Value::Float(f64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on floor".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_floor_f64_float_overflow() {
+        let result = floor_f64(f64::MAX, 0.5);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError("Float overflow on floor".to_string(),))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), None, Value::Integer(314))]
+    #[case(Value::Float(314.1), None, Value::Float(315.0))]
+    #[case(Value::Integer(314), Some(Value::Integer(10)), Value::Integer(320))]
+    #[case(Value::Integer(314), Some(Value::Float(100.0)), Value::Float(400.0))]
+    #[case(Value::Float(314.1), Some(Value::Integer(10)), Value::Integer(320))]
+    #[case(Value::Float(314.1), Some(Value::Float(100.0)), Value::Float(400.0))]
+    fn test_eval_ceiling_function_regular(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let mut arguments = vec![value_to_expression(value)];
+        if let Some(precision) = precision {
+            arguments.push(value_to_expression(precision));
+        }
+        let expr = Box::new(Expression::Function {
+            func: Func::Ceiling,
+            arguments,
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), None)]
+    #[case(Value::Bool(true), Some(Value::Integer(2)))]
+    #[case(Value::Bool(true), Some(Value::Float(2.0)))]
+    #[case(Value::Integer(2), Some(Value::Bool(true)))]
+    #[case(Value::Float(2.0), Some(Value::Bool(true)))]
+    fn test_apply_ceiling_function_bool_invalid_type(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_ceiling_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for ceiling functions".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Integer(314), Some(Value::Integer(0)))]
+    #[case(Value::Integer(314), Some(Value::Float(0.0)))]
+    #[case(Value::Float(314.1), Some(Value::Integer(0)))]
+    #[case(Value::Float(314.1), Some(Value::Float(0.0)))]
+    #[case(Value::Integer(314), Some(Value::Integer(-10)))]
+    #[case(Value::Float(314.1), Some(Value::Float(-10.0)))]
+    fn test_apply_ceiling_function_non_positive_precision(
+        #[case] value: Value,
+        #[case] precision: Option<Value>,
+    ) {
+        let result = apply_ceiling_function(value, precision);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Ceiling precision must be positive".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_ceiling_function_integer_overflow() {
+        let result = apply_ceiling_function(Value::Integer(i64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on ceiling".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_ceiling_function_float_to_integer_overflow() {
+        let result = apply_ceiling_function(Value::Float(f64::MAX), Some(Value::Integer(10)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on ceiling".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_ceiling_f64_float_overflow() {
+        let result = ceiling_f64(f64::MAX, 0.5);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Float overflow on ceiling".to_string(),
+            ))
+        );
+    }
+
+    /************ Binary function tests *************/
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Func::Power, Expression::Integer(2), Expression::Integer(3), Value::Integer(8))]
+    #[case(Func::Power, Expression::Integer(2), Expression::Float(3.0), Value::Float(8.0))]
+    #[case(Func::Power, Expression::Float(2.0), Expression::Integer(3), Value::Float(8.0))]
+    #[case(Func::Power, Expression::Float(2.0), Expression::Float(3.0), Value::Float(8.0))]
+    #[case(Func::Modulo, Expression::Integer(13), Expression::Integer(5), Value::Integer(3))]
+    #[case(Func::Modulo, Expression::Integer(13), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Func::Modulo, Expression::Float(13.0), Expression::Integer(5), Value::Float(3.0))]
+    #[case(Func::Modulo, Expression::Float(13.0), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Func::Remainder, Expression::Integer(13), Expression::Integer(5), Value::Integer(3))]
+    #[case(Func::Remainder, Expression::Integer(13), Expression::Float(5.0), Value::Float(3.0))]
+    #[case(Func::Remainder, Expression::Float(13.0), Expression::Integer(5), Value::Float(3.0))]
+    #[case(Func::Remainder, Expression::Float(13.0), Expression::Float(5.0), Value::Float(3.0))]
+    fn test_apply_binary_function_regular(
+        #[case] func: Func,
+        #[case] lhs: Expression,
+        #[case] rhs: Expression,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let expr = Box::new(Expression::Function {
+            func,
+            arguments: vec![lhs, rhs],
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    #[case(Func::Round)]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    #[case(Func::Floor)]
+    #[case(Func::Ceiling)]
+    fn test_apply_binary_function_unsupported_func(#[case] func: Func) {
+        let result = apply_binary_function(&func, vec![Value::Integer(1), Value::Integer(2)]);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(
+        vec![Value::Integer(1), Value::Integer(2)],
+        Ok((Value::Integer(1), Value::Integer(2)))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0)],
+        Ok((Value::Integer(1), Value::Float(2.0)))
+    )]
+    #[case(vec![], Err(EvalError::InvalidArity))]
+    #[case(vec![Value::Integer(1)], Err(EvalError::InvalidArity))]
+    #[case(
+        vec![Value::Integer(1), Value::Float(2.0), Value::Float(3.0)],
+        Err(EvalError::InvalidArity)
+    )]
+    #[case(
+        vec![Value::Bool(true), Value::Float(2.0)],
+        Err(EvalError::InvalidType(
+            "Binary functions not defined for bool".to_string(),
+        ))
+    )]
+    #[case(
+        vec![Value::Integer(1), Value::Bool(true)],
+        Err(EvalError::InvalidType(
+            "Binary functions not defined for bool".to_string(),
+        ))
+    )]
+    fn test_pare_vector_binary(
+        #[case] vals: Vec<Value>,
+        #[case] expected: Result<(Value, Value), EvalError>,
+    ) {
+        let result = pare_vector_binary(vals);
+
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), Value::Bool(false))]
+    #[case(Value::Bool(true), Value::Integer(2))]
+    #[case(Value::Integer(2), Value::Bool(true))]
+    #[case(Value::Bool(true), Value::Float(2.0))]
+    #[case(Value::Float(2.0), Value::Bool(true))]
+    fn test_apply_power_function_bool_invalid_type(#[case] lhs: Value, #[case] rhs: Value) {
+        let result = apply_power_function(lhs, rhs);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for power functions".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_power_function_integer_exponent_too_large() {
+        let result = apply_power_function(Value::Integer(10), Value::Integer(5_000_000_000));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer exponent too large".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_apply_power_function_integer_overflow() {
+        let result =
+            apply_power_function(Value::Integer(1_000_000_000), Value::Integer(1_000_000_000));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on power".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), Value::Bool(false))]
+    #[case(Value::Bool(true), Value::Integer(2))]
+    #[case(Value::Integer(2), Value::Bool(true))]
+    #[case(Value::Bool(true), Value::Float(2.0))]
+    #[case(Value::Float(2.0), Value::Bool(true))]
+    fn test_apply_modulo_function_bool_invalid_type(#[case] lhs: Value, #[case] rhs: Value) {
+        let result = apply_modulo_function(lhs, rhs);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for modulo functions".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true), Value::Bool(false))]
+    #[case(Value::Bool(true), Value::Integer(2))]
+    #[case(Value::Integer(2), Value::Bool(true))]
+    #[case(Value::Bool(true), Value::Float(2.0))]
+    #[case(Value::Float(2.0), Value::Bool(true))]
+    fn test_apply_remainder_function_bool_invalid_type(#[case] lhs: Value, #[case] rhs: Value) {
+        let result = apply_remainder_function(lhs, rhs);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Bools not valid for power functions".to_string(),
+            ))
+        );
+    }
+
+    /************ Unary function tests *************/
+
+    #[rstest]
+    #[case(Func::Cos, Value::Integer(0), Value::Float(1.0))]
+    #[case(Func::Cos, Value::Float(0.0), Value::Float(1.0))]
+    #[case(Func::Sin, Value::Integer(0), Value::Float(0.0))]
+    #[case(Func::Sin, Value::Float(0.0), Value::Float(0.0))]
+    #[case(Func::Tan, Value::Integer(0), Value::Float(0.0))]
+    #[case(Func::Tan, Value::Float(0.0), Value::Float(0.0))]
+    #[case(Func::ACos, Value::Integer(1), Value::Float(0.0))]
+    #[case(Func::ACos, Value::Float(1.0), Value::Float(0.0))]
+    #[case(Func::ASin, Value::Integer(0), Value::Float(0.0))]
+    #[case(Func::ASin, Value::Float(0.0), Value::Float(0.0))]
+    #[case(Func::ATan, Value::Integer(0), Value::Float(0.0))]
+    #[case(Func::ATan, Value::Float(0.0), Value::Float(0.0))]
+    #[case(Func::Abs, Value::Integer(-1), Value::Float(1.0))]
+    #[case(Func::Abs, Value::Float(-1.0), Value::Float(1.0))]
+    #[case(Func::Ln, Value::Integer(1), Value::Float(0.0))]
+    #[case(Func::Ln, Value::Float(1.0), Value::Float(0.0))]
+    #[case(Func::Log, Value::Integer(1), Value::Float(0.0))]
+    #[case(Func::Log, Value::Float(1.0), Value::Float(0.0))]
+    #[case(Func::Exp, Value::Integer(0), Value::Float(1.0))]
+    #[case(Func::Exp, Value::Float(0.0), Value::Float(1.0))]
+    fn test_unary_function_regular(
+        #[case] func: Func,
+        #[case] value: Value,
+        #[case] expected: Value,
+    ) {
+        let variables: HashMap<String, Value> = HashMap::new();
+        let argument = match value {
+            Value::Bool(value) => Expression::Bool(value),
+            Value::Integer(value) => Expression::Integer(value),
+            Value::Float(value) => Expression::Float(value),
+        };
+        let expr = Box::new(Expression::Function {
+            func,
+            arguments: vec![argument],
+        });
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Ok(expected));
+    }
+
+    #[rstest]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    fn test_apply_unary_function_bool_invalid_type(#[case] func: Func) {
+        let result = apply_unary_function(&func, vec![Value::Bool(true)]);
+
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType(
+                "Unary functions not defined for bool".to_string(),
+            ))
+        );
+    }
+
+    #[rstest]
+    #[case(Func::Cos)]
+    #[case(Func::Sin)]
+    #[case(Func::Tan)]
+    #[case(Func::ACos)]
+    #[case(Func::ASin)]
+    #[case(Func::ATan)]
+    #[case(Func::Abs)]
+    #[case(Func::Ln)]
+    #[case(Func::Log)]
+    #[case(Func::Exp)]
+    fn test_apply_unary_function_invalid_arity(#[case] func: Func) {
+        let result = apply_unary_function(&func, vec![Value::Float(1.0), Value::Float(2.0)]);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
+    }
+
+    #[rstest]
+    #[case(Func::Min)]
+    #[case(Func::Max)]
+    #[case(Func::Power)]
+    #[case(Func::Modulo)]
+    #[case(Func::Remainder)]
+    #[case(Func::Round)]
+    #[case(Func::Floor)]
+    #[case(Func::Ceiling)]
+    fn test_apply_unary_function_unsupported_func(#[case] func: Func) {
+        let result = apply_unary_function(&func, vec![Value::Float(1.0)]);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[rstest]
+    #[case(Value::Bool(true))]
+    #[case(Value::Integer(-1))]
+    fn test_apply_float_unary(#[case] value: Value) {
+        let result = apply_float_unary(value, f64::abs);
+
+        assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+}
