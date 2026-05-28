@@ -247,13 +247,13 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
             Ok(Value::Bool(l != r))
         }
         (Opcode::GreaterThan, Value::Bool(l), Value::Bool(r)) => {
-            Ok(Value::Bool(l > r))
+            Ok(Value::Bool(l & !r))
         }
         (Opcode::GreaterThanEquals, Value::Bool(l), Value::Bool(r)) => {
             Ok(Value::Bool(l >= r))
         }
         (Opcode::LessThan, Value::Bool(l), Value::Bool(r)) => {
-            Ok(Value::Bool(l < r))
+            Ok(Value::Bool(!l & r))
         }
         (Opcode::LessThanEquals, Value::Bool(l), Value::Bool(r)) => {
             Ok(Value::Bool(l <= r))
@@ -296,7 +296,7 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
             Ok(Value::Bool(l <= r))
         }
         (Opcode::ApproximatelyEquals, Value::Float(l), Value::Float(r)) => {
-            Ok(Value::Bool((l - r).abs() < (l.max(r) * EPSILON)))
+            Ok(Value::Bool((l - r).abs() <= (l.max(r) * EPSILON)))
         }
         _ => Err(EvalError::InvalidType(
             "Cannot mix types for binary comparison".to_string(),
