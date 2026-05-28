@@ -247,13 +247,13 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
             Ok(Value::Bool(l != r))
         }
         (Opcode::GreaterThan, Value::Bool(l), Value::Bool(r)) => {
-            Ok(Value::Bool(l & !r))
+            Ok(Value::Bool(l > r))
         }
         (Opcode::GreaterThanEquals, Value::Bool(l), Value::Bool(r)) => {
             Ok(Value::Bool(l >= r))
         }
         (Opcode::LessThan, Value::Bool(l), Value::Bool(r)) => {
-            Ok(Value::Bool(!l & r))
+            Ok(Value::Bool(l < r))
         }
         (Opcode::LessThanEquals, Value::Bool(l), Value::Bool(r)) => {
             Ok(Value::Bool(l <= r))
@@ -1633,17 +1633,21 @@ mod tests {
     #[case(Opcode::NotEquals, Expression::Float(1.0), Expression::Integer(1), Value::Bool(false))]
     #[case(Opcode::NotEquals, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::LessThan, Expression::Integer(1), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Integer(2), Expression::Integer(2), Value::Bool(false))]
     #[case(Opcode::LessThan, Expression::Integer(1), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::LessThan, Expression::Float(2.0), Expression::Integer(1), Value::Bool(false))]
     #[case(Opcode::LessThan, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Float(2.0), Expression::Float(2.0), Value::Bool(false))]
     #[case(Opcode::LessThanEquals, Expression::Integer(2), Expression::Integer(2), Value::Bool(true))]
     #[case(Opcode::LessThanEquals, Expression::Integer(2), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::LessThanEquals, Expression::Float(2.0), Expression::Integer(1), Value::Bool(false))]
     #[case(Opcode::LessThanEquals, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Integer(1), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Integer(2), Value::Bool(false))]
     #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Float(1.0), Value::Bool(true))]
     #[case(Opcode::GreaterThan, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
     #[case(Opcode::GreaterThan, Expression::Float(2.0), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Float(2.0), Expression::Float(2.0), Value::Bool(false))]
     #[case(Opcode::GreaterThanEquals, Expression::Integer(2), Expression::Integer(2), Value::Bool(true))]
     #[case(Opcode::GreaterThanEquals, Expression::Integer(2), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::GreaterThanEquals, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
@@ -1657,8 +1661,11 @@ mod tests {
     #[case(Opcode::Equals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
     #[case(Opcode::NotEquals, Expression::Bool(true), Expression::Bool(false), Value::Bool(true))]
     #[case(Opcode::LessThan, Expression::Bool(false), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Bool(false), Expression::Bool(false), Value::Bool(false))]
     #[case(Opcode::LessThanEquals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
     #[case(Opcode::GreaterThan, Expression::Bool(true), Expression::Bool(false), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Bool(false), Expression::Bool(false), Value::Bool(false))]
+    #[case(Opcode::GreaterThan, Expression::Bool(true), Expression::Bool(true), Value::Bool(false))]
     #[case(Opcode::GreaterThanEquals, Expression::Bool(false), Expression::Bool(false), Value::Bool(true))]
     #[case(Opcode::ApproximatelyEquals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
     #[case(Opcode::ApproximatelyEquals, Expression::Bool(true), Expression::Bool(false), Value::Bool(false))]
