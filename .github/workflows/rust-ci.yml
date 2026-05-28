@@ -1,0 +1,29 @@
+name: rust-ci
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/rust-ci.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "build.rs"
+      - "src/**"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy -p shunting_yard -- -D warnings
+
+      - name: Run tests
+        run: cargo test -p shunting_yard

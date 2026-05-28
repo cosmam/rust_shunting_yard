@@ -247,13 +247,13 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
             Ok(Value::Bool(l != r))
         }
         (Opcode::GreaterThan, Value::Bool(l), Value::Bool(r)) => {
-            Ok(Value::Bool(l > r))
+            Ok(Value::Bool(l & !r))
         }
         (Opcode::GreaterThanEquals, Value::Bool(l), Value::Bool(r)) => {
             Ok(Value::Bool(l >= r))
         }
         (Opcode::LessThan, Value::Bool(l), Value::Bool(r)) => {
-            Ok(Value::Bool(l < r))
+            Ok(Value::Bool(!l & r))
         }
         (Opcode::LessThanEquals, Value::Bool(l), Value::Bool(r)) => {
             Ok(Value::Bool(l <= r))
@@ -1253,6 +1253,7 @@ fn apply_float_unary(val: Value, op: fn(f64) -> f64) -> Result<Value, EvalError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use rstest::*;
 
     // in general, we'll test from the public eval function. The exceptions
@@ -1685,6 +1686,68 @@ mod tests {
         let result = eval(&expr, &variables);
 
         assert_eq!(result, Ok(expected));
+    }
+
+    proptest! {
+        #[test]
+        fn prop_integer_comparisons_match_rust_ordering(lhs in any::<i64>(), rhs in any::<i64>()) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThan, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs < rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThanEquals, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs <= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThan, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs > rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs >= rhs))
+            );
+        }
+
+        #[test]
+        fn prop_float_comparisons_match_rust_ordering(lhs in -1.0e12f64..1.0e12, rhs in -1.0e12f64..1.0e12) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThan, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs < rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThanEquals, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs <= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThan, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs > rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs >= rhs))
+            );
+        }
+
+        #[test]
+        fn prop_bool_comparisons_match_rust_ordering(lhs in any::<bool>(), rhs in any::<bool>()) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThan, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs < rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs <= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThan, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs > rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs >= rhs))
+            );
+        }
     }
 
     #[rstest]

@@ -13,4 +13,5 @@ roundable = "0.2.0"
 lalrpop = "0.23.1"
 
 [dev-dependencies]
+proptest = "1.6.0"
 rstest = "0.26.1"
