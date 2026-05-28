@@ -1737,7 +1737,7 @@ mod tests {
         fn prop_bool_comparisons_match_rust_ordering(lhs in any::<bool>(), rhs in any::<bool>()) {
             prop_assert_eq!(
                 apply_binary_comparison(&Opcode::LessThan, Value::Bool(lhs), Value::Bool(rhs)),
-                Ok(Value::Bool(lhs < rhs))
+                Ok(Value::Bool(!lhs & rhs))
             );
             prop_assert_eq!(
                 apply_binary_comparison(&Opcode::LessThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
@@ -1745,7 +1745,7 @@ mod tests {
             );
             prop_assert_eq!(
                 apply_binary_comparison(&Opcode::GreaterThan, Value::Bool(lhs), Value::Bool(rhs)),
-                Ok(Value::Bool(lhs > rhs))
+                Ok(Value::Bool(lhs & !rhs))
             );
             prop_assert_eq!(
                 apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
