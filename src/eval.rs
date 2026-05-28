@@ -296,7 +296,7 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
             Ok(Value::Bool(l <= r))
         }
         (Opcode::ApproximatelyEquals, Value::Float(l), Value::Float(r)) => {
-            Ok(Value::Bool((l - r).abs() < (l.max(r) * EPSILON)))
+            Ok(Value::Bool((l - r).abs() <= (l.max(r) * EPSILON)))
         }
         _ => Err(EvalError::InvalidType(
             "Cannot mix types for binary comparison".to_string(),
@@ -836,9 +836,13 @@ fn round_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
         ));
     }
 
-    value
-        .try_round_to(precision, Tie::Up)
-        .ok_or_else(|| EvalError::MathError("Float overflow on round".to_string()))
+    let rounded = value.try_round_to(precision, Tie::Up).unwrap_or(f64::NAN);
+
+    if rounded.is_finite() {
+        Ok(rounded)
+    } else {
+        Err(EvalError::MathError("Float overflow on round".to_string()))
+    }
 }
 
 /// Round a float and convert the result to an integer.
@@ -1253,6 +1257,7 @@ fn apply_float_unary(val: Value, op: fn(f64) -> f64) -> Result<Value, EvalError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use rstest::*;
 
     // in general, we'll test from the public eval function. The exceptions
@@ -1633,17 +1638,21 @@ mod tests {
     #[case(Opcode::NotEquals, Expression::Float(1.0), Expression::Integer(1), Value::Bool(false))]
     #[case(Opcode::NotEquals, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::LessThan, Expression::Integer(1), Expression::Integer(2), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Integer(2), Expression::Integer(2), Value::Bool(false))]
     #[case(Opcode::LessThan, Expression::Integer(1), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::LessThan, Expression::Float(2.0), Expression::Integer(1), Value::Bool(false))]
     #[case(Opcode::LessThan, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Float(2.0), Expression::Float(2.0), Value::Bool(false))]
     #[case(Opcode::LessThanEquals, Expression::Integer(2), Expression::Integer(2), Value::Bool(true))]
     #[case(Opcode::LessThanEquals, Expression::Integer(2), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::LessThanEquals, Expression::Float(2.0), Expression::Integer(1), Value::Bool(false))]
     #[case(Opcode::LessThanEquals, Expression::Float(1.0), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Integer(1), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Integer(2), Value::Bool(false))]
     #[case(Opcode::GreaterThan, Expression::Integer(2), Expression::Float(1.0), Value::Bool(true))]
     #[case(Opcode::GreaterThan, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
     #[case(Opcode::GreaterThan, Expression::Float(2.0), Expression::Float(1.0), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Float(2.0), Expression::Float(2.0), Value::Bool(false))]
     #[case(Opcode::GreaterThanEquals, Expression::Integer(2), Expression::Integer(2), Value::Bool(true))]
     #[case(Opcode::GreaterThanEquals, Expression::Integer(2), Expression::Float(2.0), Value::Bool(true))]
     #[case(Opcode::GreaterThanEquals, Expression::Float(1.0), Expression::Integer(2), Value::Bool(false))]
@@ -1657,8 +1666,11 @@ mod tests {
     #[case(Opcode::Equals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
     #[case(Opcode::NotEquals, Expression::Bool(true), Expression::Bool(false), Value::Bool(true))]
     #[case(Opcode::LessThan, Expression::Bool(false), Expression::Bool(true), Value::Bool(true))]
+    #[case(Opcode::LessThan, Expression::Bool(false), Expression::Bool(false), Value::Bool(false))]
     #[case(Opcode::LessThanEquals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
     #[case(Opcode::GreaterThan, Expression::Bool(true), Expression::Bool(false), Value::Bool(true))]
+    #[case(Opcode::GreaterThan, Expression::Bool(false), Expression::Bool(false), Value::Bool(false))]
+    #[case(Opcode::GreaterThan, Expression::Bool(true), Expression::Bool(true), Value::Bool(false))]
     #[case(Opcode::GreaterThanEquals, Expression::Bool(false), Expression::Bool(false), Value::Bool(true))]
     #[case(Opcode::ApproximatelyEquals, Expression::Bool(true), Expression::Bool(true), Value::Bool(true))]
     #[case(Opcode::ApproximatelyEquals, Expression::Bool(true), Expression::Bool(false), Value::Bool(false))]
@@ -1678,6 +1690,68 @@ mod tests {
         let result = eval(&expr, &variables);
 
         assert_eq!(result, Ok(expected));
+    }
+
+    proptest! {
+        #[test]
+        fn prop_integer_comparisons_match_rust_ordering(lhs in any::<i64>(), rhs in any::<i64>()) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThan, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs < rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThanEquals, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs <= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThan, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs > rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs >= rhs))
+            );
+        }
+
+        #[test]
+        fn prop_float_comparisons_match_rust_ordering(lhs in -1.0e12f64..1.0e12, rhs in -1.0e12f64..1.0e12) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThan, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs < rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThanEquals, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs <= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThan, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs > rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs >= rhs))
+            );
+        }
+
+        #[test]
+        fn prop_bool_comparisons_match_rust_ordering(lhs in any::<bool>(), rhs in any::<bool>()) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThan, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(!lhs & rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs <= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThan, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs & !rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs >= rhs))
+            );
+        }
     }
 
     #[rstest]
@@ -2402,6 +2476,13 @@ mod tests {
         assert_eq!(result, Err(EvalError::UnexpectedOpcode));
     }
 
+    #[test]
+    fn test_apply_rounding_function_invalid_arguments() {
+        let result = apply_rounding_function(&Func::Round, vec![]);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
+    }
+
     #[rstest]
     #[case(
         vec![Value::Integer(1)],
@@ -2520,6 +2601,16 @@ mod tests {
     }
 
     #[test]
+    fn test_round_f64_float_overflow() {
+        let result = round_f64(f64::INFINITY, 0.5);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError("Float overflow on round".to_string(),))
+        );
+    }
+
+    #[test]
     fn test_apply_round_function_integer_overflow() {
         let result = apply_round_function(Value::Integer(i64::MAX), Some(Value::Integer(10)));
 
@@ -2632,12 +2723,36 @@ mod tests {
     }
 
     #[test]
+    fn test_floor_i64_integer_overflow() {
+        let result = floor_i64(i64::MIN, 3);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on floor".to_string(),
+            ))
+        );
+    }
+
+    #[test]
     fn test_floor_f64_float_overflow() {
         let result = floor_f64(f64::MAX, 0.5);
 
         assert_eq!(
             result,
             Err(EvalError::MathError("Float overflow on floor".to_string(),))
+        );
+    }
+
+    #[test]
+    fn test_ceiling_i64_propagates_floor_overflow() {
+        let result = ceiling_i64(i64::MIN, 3);
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(
+                "Integer overflow on floor".to_string(),
+            ))
         );
     }
 
@@ -2798,6 +2913,13 @@ mod tests {
         let result = apply_binary_function(&func, vec![Value::Integer(1), Value::Integer(2)]);
 
         assert_eq!(result, Err(EvalError::UnexpectedOpcode));
+    }
+
+    #[test]
+    fn test_apply_binary_function_invalid_arguments() {
+        let result = apply_binary_function(&Func::Power, vec![Value::Integer(1)]);
+
+        assert_eq!(result, Err(EvalError::InvalidArity));
     }
 
     #[rstest]
