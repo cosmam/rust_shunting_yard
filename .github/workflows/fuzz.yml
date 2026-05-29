@@ -1,0 +1,33 @@
+name: fuzz
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/fuzz.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/shunting-yard/Cargo.toml"
+      - "crates/shunting-yard/build.rs"
+      - "crates/shunting-yard/src/**"
+      - "crates/shunting-yard/fuzz/**"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-build:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Build shunting-yard fuzz targets
+        working-directory: crates/shunting-yard/fuzz
+        run: cargo fuzz build
