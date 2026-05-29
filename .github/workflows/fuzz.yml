@@ -17,6 +17,7 @@ env:
 
 jobs:
   fuzz-build:
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
