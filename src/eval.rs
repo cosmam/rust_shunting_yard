@@ -861,7 +861,7 @@ fn checked_f64_to_i64(value: f64, operation: &str) -> Result<i64, EvalError> {
     const I64_MIN_AS_F64: f64 = i64::MIN as f64;
     const I64_MAX_EXCLUSIVE_AS_F64: f64 = -(i64::MIN as f64);
 
-    if value < I64_MIN_AS_F64 || value >= I64_MAX_EXCLUSIVE_AS_F64 {
+    if !(I64_MIN_AS_F64..I64_MAX_EXCLUSIVE_AS_F64).contains(&value) {
         return Err(EvalError::MathError(format!(
             "Integer overflow on {operation}"
         )));

@@ -146,7 +146,11 @@ mod tests {
     use crate::lexer;
     use lalrpop_util::lalrpop_mod;
     use rstest::*;
-    lalrpop_mod!(pub calc); // Load the generated module
+    lalrpop_mod!(
+        #[allow(clippy::all)]
+        #[allow(clippy::pedantic)]
+        pub calc
+    ); // Load the generated module
 
     /************ Single-symbol parsing tests *************/
 
