@@ -854,13 +854,20 @@ fn round_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
 fn round_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
     let rounded = round_f64(value, precision as f64)?;
 
-    if rounded < i64::MIN as f64 || rounded > i64::MAX as f64 {
-        return Err(EvalError::MathError(
-            "Integer overflow on round".to_string(),
-        ));
+    checked_f64_to_i64(rounded, "round")
+}
+
+fn checked_f64_to_i64(value: f64, operation: &str) -> Result<i64, EvalError> {
+    const I64_MIN_AS_F64: f64 = i64::MIN as f64;
+    const I64_MAX_EXCLUSIVE_AS_F64: f64 = -(i64::MIN as f64);
+
+    if !(I64_MIN_AS_F64..I64_MAX_EXCLUSIVE_AS_F64).contains(&value) {
+        return Err(EvalError::MathError(format!(
+            "Integer overflow on {operation}"
+        )));
     }
 
-    Ok(rounded as i64)
+    Ok(value as i64)
 }
 
 /// Apply floor-to-precision semantics to a value.
@@ -948,13 +955,7 @@ fn floor_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
 fn floor_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
     let floored = floor_f64(value, precision as f64)?;
 
-    if floored < i64::MIN as f64 || floored > i64::MAX as f64 {
-        return Err(EvalError::MathError(
-            "Integer overflow on floor".to_string(),
-        ));
-    }
-
-    Ok(floored as i64)
+    checked_f64_to_i64(floored, "floor")
 }
 
 /// Apply ceiling-to-precision semantics to a value.
@@ -1044,13 +1045,7 @@ fn ceiling_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
 fn ceiling_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
     let ceiling = ceiling_f64(value, precision as f64)?;
 
-    if ceiling < i64::MIN as f64 || ceiling > i64::MAX as f64 {
-        return Err(EvalError::MathError(
-            "Integer overflow on ceiling".to_string(),
-        ));
-    }
-
-    Ok(ceiling as i64)
+    checked_f64_to_i64(ceiling, "ceiling")
 }
 
 /// Apply a two-argument numeric function.
@@ -2598,6 +2593,78 @@ mod tests {
                 "Integer overflow on round".to_string(),
             ))
         );
+    }
+
+    #[rstest]
+    #[case(
+        apply_round_function as fn(Value, Option<Value>) -> Result<Value, EvalError>,
+        "round"
+    )]
+    #[case(
+        apply_floor_function as fn(Value, Option<Value>) -> Result<Value, EvalError>,
+        "floor"
+    )]
+    #[case(
+        apply_ceiling_function as fn(Value, Option<Value>) -> Result<Value, EvalError>,
+        "ceiling"
+    )]
+    fn test_float_to_integer_conversion_negative_overflow(
+        #[case] apply: fn(Value, Option<Value>) -> Result<Value, EvalError>,
+        #[case] operation: &str,
+    ) {
+        let result = apply(Value::Float(f64::MIN), Some(Value::Integer(1)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(format!(
+                "Integer overflow on {operation}"
+            )))
+        );
+    }
+
+    #[rstest]
+    #[case(
+        apply_round_function as fn(Value, Option<Value>) -> Result<Value, EvalError>,
+        "round"
+    )]
+    #[case(
+        apply_floor_function as fn(Value, Option<Value>) -> Result<Value, EvalError>,
+        "floor"
+    )]
+    #[case(
+        apply_ceiling_function as fn(Value, Option<Value>) -> Result<Value, EvalError>,
+        "ceiling"
+    )]
+    fn test_float_to_integer_conversion_upper_bound_overflow(
+        #[case] apply: fn(Value, Option<Value>) -> Result<Value, EvalError>,
+        #[case] operation: &str,
+    ) {
+        let result = apply(Value::Float(i64::MAX as f64), Some(Value::Integer(1)));
+
+        assert_eq!(
+            result,
+            Err(EvalError::MathError(format!(
+                "Integer overflow on {operation}"
+            )))
+        );
+    }
+
+    #[rstest]
+    #[case(
+        apply_round_function as fn(Value, Option<Value>) -> Result<Value, EvalError>
+    )]
+    #[case(
+        apply_floor_function as fn(Value, Option<Value>) -> Result<Value, EvalError>
+    )]
+    #[case(
+        apply_ceiling_function as fn(Value, Option<Value>) -> Result<Value, EvalError>
+    )]
+    fn test_float_to_integer_conversion_lower_bound_allowed(
+        #[case] apply: fn(Value, Option<Value>) -> Result<Value, EvalError>,
+    ) {
+        let result = apply(Value::Float(i64::MIN as f64), Some(Value::Integer(1)));
+
+        assert_eq!(result, Ok(Value::Integer(i64::MIN)));
     }
 
     #[test]
