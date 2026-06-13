@@ -53,12 +53,18 @@ impl From<ParseFloatError> for LexicalError {
 impl LexicalError {
     /// Build an unknown-symbol error from the current lexer slice.
     fn from_lexer<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Self {
+        debug_assert!(!lex.slice().is_empty());
+
         LexicalError::UnknownSymbol(lex.slice().to_string())
     }
 }
 
 /// Parse the current `0x...` lexer slice as a hexadecimal `i64`.
 fn parse_bool<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<bool, LexicalError> {
+    debug_assert!(
+        lex.slice().eq_ignore_ascii_case("true") || lex.slice().eq_ignore_ascii_case("false")
+    );
+
     let result = lex.slice().parse::<bool>();
     match result {
         Ok(val) => Ok(val),
@@ -69,6 +75,10 @@ fn parse_bool<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<bool, Lexical
 /// Parse the current `0x...` lexer slice as a hexadecimal `i64`.
 fn parse_hex<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Option<i64> {
     let slice = lex.slice();
+    debug_assert!(slice.starts_with("0x"));
+    debug_assert!(slice.len() > 2);
+    debug_assert!(slice[2..].chars().all(|c| c.is_ascii_hexdigit()));
+
     let cleaned = slice.strip_prefix("0x").unwrap_or(slice);
     i64::from_str_radix(cleaned, 16).ok()
 }
@@ -80,6 +90,14 @@ fn parse_hex<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Option<i64> {
 /// Returns [`LexicalError::InvalidFloat`] when Rust cannot parse the slice or
 /// when the parsed value is NaN, infinite, or subnormal.
 fn parse_float<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<f64, LexicalError> {
+    debug_assert!(!lex.slice().is_empty());
+    debug_assert!(
+        lex.slice().contains('.')
+            || lex.slice().contains('e')
+            || lex.slice().contains('E')
+            || lex.slice().to_ascii_lowercase().starts_with("nan")
+    );
+
     let result = lex.slice().parse::<f64>()?;
     match result.classify() {
         FpCategory::Nan => Err(LexicalError::InvalidFloat("NaN".to_owned())),
