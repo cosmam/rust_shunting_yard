@@ -858,6 +858,8 @@ fn round_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
 }
 
 fn checked_f64_to_i64(value: f64, operation: &str) -> Result<i64, EvalError> {
+    debug_assert!(matches!(operation, "round" | "floor" | "ceiling"));
+
     const I64_MIN_AS_F64: f64 = i64::MIN as f64;
     const I64_MAX_EXCLUSIVE_AS_F64: f64 = -(i64::MIN as f64);
 
