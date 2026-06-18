@@ -103,6 +103,11 @@ mod tests {
         Mul(Box<PropExpr>, Box<PropExpr>),
     }
 
+    #[derive(Clone, Debug)]
+    enum IllTypedExpr {
+        AddBoolInt(bool, i64),
+    }
+
     impl PropExpr {
         fn render(&self) -> String {
             match self {
@@ -117,6 +122,14 @@ mod tests {
                 PropExpr::Int(value) => *value,
                 PropExpr::Add(lhs, rhs) => lhs.reference_eval() + rhs.reference_eval(),
                 PropExpr::Mul(lhs, rhs) => lhs.reference_eval() * rhs.reference_eval(),
+            }
+        }
+    }
+
+    impl IllTypedExpr {
+        fn render(&self) -> String {
+            match self {
+                IllTypedExpr::AddBoolInt(lhs, rhs) => format!("({lhs} + {rhs})"),
             }
         }
     }
@@ -159,6 +172,10 @@ mod tests {
                         .prop_map(|(lhs, rhs)| PropExpr::Mul(Box::new(lhs), Box::new(rhs))),
                 ]
             })
+    }
+
+    fn ill_typed_expr() -> impl Strategy<Value = IllTypedExpr> {
+        (any::<bool>(), -1_000i64..1_000).prop_map(|(lhs, rhs)| IllTypedExpr::AddBoolInt(lhs, rhs))
     }
 
     #[test]
@@ -360,6 +377,16 @@ mod tests {
                 evaluate(&text, &HashMap::new()),
                 Ok(Value::Integer(expr.reference_eval()))
             );
+        }
+
+        #[test]
+        fn prop_ill_typed_expression_returns_invalid_type(expr in ill_typed_expr()) {
+            let text = expr.render();
+
+            prop_assert!(matches!(
+                evaluate(&text, &HashMap::new()),
+                Err(EvalError::InvalidType(_))
+            ));
         }
     }
 }
