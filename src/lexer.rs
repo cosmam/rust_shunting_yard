@@ -18,7 +18,6 @@ pub type Spanned<Tok, Loc, Error> = Result<(Loc, Tok, Loc), Error>;
 
 /// Iterator over spanned parser tokens borrowed from an input string.
 pub struct Lexer<'input> {
-    input: &'input str,
     // instead of an iterator over characters, we have a token iterator
     token_stream: SpannedIter<'input, Token<'input>>,
 }
@@ -29,11 +28,8 @@ impl<'input> Lexer<'input> {
     /// Whitespace is skipped by the [`Token`] grammar. Each yielded item reports
     /// the token and its byte span in the original input.
     pub fn new(input: &'input str) -> Self {
-        debug_assert!(input.is_char_boundary(input.len()));
-
         // the Token::lexer() method is provided by the Logos trait
         Self {
-            input,
             token_stream: Token::lexer(input).spanned(),
         }
     }
@@ -49,20 +45,8 @@ impl<'input> Iterator for Lexer<'input> {
     /// lexical failures in the AST.
     fn next(&mut self) -> Option<Self::Item> {
         self.token_stream.next().map(|(token, span)| match token {
-            Ok(token) => {
-                debug_assert!(span.start <= span.end);
-                debug_assert!(span.end <= self.input.len());
-                debug_assert!(self.input.is_char_boundary(span.start));
-                debug_assert!(self.input.is_char_boundary(span.end));
-                Ok((span.start, token, span.end))
-            }
-            Err(err) => {
-                debug_assert!(span.start <= span.end);
-                debug_assert!(span.end <= self.input.len());
-                debug_assert!(self.input.is_char_boundary(span.start));
-                debug_assert!(self.input.is_char_boundary(span.end));
-                Ok((span.start, Token::Error(err), span.end))
-            }
+            Ok(token) => Ok((span.start, token, span.end)),
+            Err(err) => Ok((span.start, Token::Error(err), span.end)),
         })
     }
 }

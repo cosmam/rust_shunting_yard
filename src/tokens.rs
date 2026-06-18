@@ -9,23 +9,27 @@
 
 use logos::Logos;
 use logos_display::{Debug, Display};
-use std::fmt;
 use std::num::{FpCategory, ParseFloatError, ParseIntError};
 use std::str::ParseBoolError;
 
 /// Error produced while converting source text into tokens.
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq, thiserror::Error)]
 pub enum LexicalError {
     /// A boolean literal could not be parsed as `bool`
+    #[error("Invalid Bool: {0}")]
     InvalidBool(String),
     /// An integer literal could not be parsed as an `i64`.
+    #[error("Invalid Integer: {0}")]
     InvalidInteger(String),
     /// A floating-point literal could not be parsed as a finite normal or zero `f64`.
+    #[error("Invalid Float: {0}")]
     InvalidFloat(String),
     /// Source text did not match any token pattern.
+    #[error("Unknown Symbol: {0}")]
     UnknownSymbol(String),
     /// Generic Logos error fallback.
     #[default]
+    #[error("Invalid Token")]
     InvalidToken,
 }
 
@@ -53,18 +57,12 @@ impl From<ParseFloatError> for LexicalError {
 impl LexicalError {
     /// Build an unknown-symbol error from the current lexer slice.
     fn from_lexer<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Self {
-        debug_assert!(!lex.slice().is_empty());
-
         LexicalError::UnknownSymbol(lex.slice().to_string())
     }
 }
 
 /// Parse the current `0x...` lexer slice as a hexadecimal `i64`.
 fn parse_bool<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<bool, LexicalError> {
-    debug_assert!(
-        lex.slice().eq_ignore_ascii_case("true") || lex.slice().eq_ignore_ascii_case("false")
-    );
-
     let result = lex.slice().parse::<bool>();
     match result {
         Ok(val) => Ok(val),
@@ -75,10 +73,6 @@ fn parse_bool<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<bool, Lexical
 /// Parse the current `0x...` lexer slice as a hexadecimal `i64`.
 fn parse_hex<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Option<i64> {
     let slice = lex.slice();
-    debug_assert!(slice.starts_with("0x"));
-    debug_assert!(slice.len() > 2);
-    debug_assert!(slice[2..].chars().all(|c| c.is_ascii_hexdigit()));
-
     let cleaned = slice.strip_prefix("0x").unwrap_or(slice);
     i64::from_str_radix(cleaned, 16).ok()
 }
@@ -90,14 +84,6 @@ fn parse_hex<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Option<i64> {
 /// Returns [`LexicalError::InvalidFloat`] when Rust cannot parse the slice or
 /// when the parsed value is NaN, infinite, or subnormal.
 fn parse_float<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<f64, LexicalError> {
-    debug_assert!(!lex.slice().is_empty());
-    debug_assert!(
-        lex.slice().contains('.')
-            || lex.slice().contains('e')
-            || lex.slice().contains('E')
-            || lex.slice().to_ascii_lowercase().starts_with("nan")
-    );
-
     let result = lex.slice().parse::<f64>()?;
     match result.classify() {
         FpCategory::Nan => Err(LexicalError::InvalidFloat("NaN".to_owned())),
@@ -314,21 +300,6 @@ pub enum Token<'source> {
     Error(LexicalError),
 }
 
-impl fmt::Display for LexicalError {
-    /// Format the lexical error as a short human-readable message.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LexicalError::InvalidToken => write!(f, "Invalid Token"),
-            LexicalError::UnknownSymbol(c) => write!(f, "Unknown Symbol: {}", c),
-            LexicalError::InvalidBool(c) => write!(f, "Invalid Bool: {}", c),
-            LexicalError::InvalidInteger(c) => write!(f, "Invalid Integer: {}", c),
-            LexicalError::InvalidFloat(c) => write!(f, "Invalid Float: {}", c),
-        }
-    }
-}
-
-impl std::error::Error for LexicalError {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,6 +327,13 @@ mod tests {
         let lexical_error = LexicalError::InvalidInteger("Test".to_string());
 
         assert_eq!(format!("{}", lexical_error), "Invalid Integer: Test");
+    }
+
+    #[test]
+    fn test_display_lexical_error_bool() {
+        let lexical_error = LexicalError::InvalidBool("Test".to_string());
+
+        assert_eq!(format!("{}", lexical_error), "Invalid Bool: Test");
     }
 
     #[test]

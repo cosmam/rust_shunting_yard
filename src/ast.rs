@@ -146,11 +146,7 @@ mod tests {
     use crate::lexer;
     use lalrpop_util::lalrpop_mod;
     use rstest::*;
-    lalrpop_mod!(
-        #[allow(clippy::all)]
-        #[allow(clippy::pedantic)]
-        pub calc
-    ); // Load the generated module
+    lalrpop_mod!(pub calc); // Load the generated module
 
     /************ Single-symbol parsing tests *************/
 
@@ -853,12 +849,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case("<", Opcode::LessThan)]
-    #[case("<=", Opcode::LessThanEquals)]
-    #[case(">", Opcode::GreaterThan)]
-    #[case(">=", Opcode::GreaterThanEquals)]
-    fn test_binary_seven_and_eight_left(#[case] op_str: &str, #[case] other: Opcode) {
-        let input = format!("1{}2&3", op_str);
+    #[case("==", Opcode::Equals)]
+    #[case("!=", Opcode::NotEquals)]
+    #[case("/=", Opcode::NotEquals)]
+    #[case("~=", Opcode::ApproximatelyEquals)]
+    fn test_binary_relational_and_equality_left(#[case] op_str: &str, #[case] other: Opcode) {
+        let input = format!("1<2{}3", op_str);
         let lexer = lexer::Lexer::new(&input);
         let parser = calc::ExpressionParser::new();
         let mut errors = Vec::new();
@@ -869,22 +865,22 @@ mod tests {
             Ok(Box::new(Expression::BinaryOperation {
                 lhs: Box::new(Expression::BinaryOperation {
                     lhs: Box::new(Expression::Integer(1)),
-                    operator: other,
+                    operator: Opcode::LessThan,
                     rhs: Box::new(Expression::Integer(2)),
                 }),
-                operator: Opcode::BitwiseAnd,
+                operator: other,
                 rhs: Box::new(Expression::Integer(3)),
             }),)
         );
     }
 
     #[rstest]
-    #[case("<", Opcode::LessThan)]
-    #[case("<=", Opcode::LessThanEquals)]
-    #[case(">", Opcode::GreaterThan)]
-    #[case(">=", Opcode::GreaterThanEquals)]
-    fn test_binary_seven_and_eight_right(#[case] op_str: &str, #[case] other: Opcode) {
-        let input = format!("1&2{}3", op_str);
+    #[case("==", Opcode::Equals)]
+    #[case("!=", Opcode::NotEquals)]
+    #[case("/=", Opcode::NotEquals)]
+    #[case("~=", Opcode::ApproximatelyEquals)]
+    fn test_binary_relational_and_equality_right(#[case] op_str: &str, #[case] other: Opcode) {
+        let input = format!("1{}2<3", op_str);
         let lexer = lexer::Lexer::new(&input);
         let parser = calc::ExpressionParser::new();
         let mut errors = Vec::new();
@@ -894,10 +890,10 @@ mod tests {
             result,
             Ok(Box::new(Expression::BinaryOperation {
                 lhs: Box::new(Expression::Integer(1)),
-                operator: Opcode::BitwiseAnd,
+                operator: other,
                 rhs: Box::new(Expression::BinaryOperation {
                     lhs: Box::new(Expression::Integer(2)),
-                    operator: other,
+                    operator: Opcode::LessThan,
                     rhs: Box::new(Expression::Integer(3)),
                 }),
             }),)
@@ -905,6 +901,7 @@ mod tests {
     }
 
     #[rstest]
+    #[case("==", Opcode::Equals, "&", Opcode::BitwiseAnd)]
     #[case("&", Opcode::BitwiseAnd, "^", Opcode::BitwiseXor)]
     #[case("^", Opcode::BitwiseXor, "|", Opcode::BitwiseOr)]
     #[case("|", Opcode::BitwiseOr, "&&", Opcode::LogicalAnd)]
@@ -936,6 +933,7 @@ mod tests {
     }
 
     #[rstest]
+    #[case("==", Opcode::Equals, "&", Opcode::BitwiseAnd)]
     #[case("&", Opcode::BitwiseAnd, "^", Opcode::BitwiseXor)]
     #[case("^", Opcode::BitwiseXor, "|", Opcode::BitwiseOr)]
     #[case("|", Opcode::BitwiseOr, "&&", Opcode::LogicalAnd)]
@@ -971,34 +969,8 @@ mod tests {
     #[case("!=", Opcode::NotEquals)]
     #[case("/=", Opcode::NotEquals)]
     #[case("~=", Opcode::ApproximatelyEquals)]
-    fn test_binary_operators_twelve_left(#[case] op_str: &str, #[case] opcode: Opcode) {
+    fn test_binary_equality_and_logical_or_left(#[case] op_str: &str, #[case] opcode: Opcode) {
         let input = format!("1{}2||3", op_str);
-        let lexer = lexer::Lexer::new(&input);
-        let parser = calc::ExpressionParser::new();
-        let mut errors = Vec::new();
-        let result = parser.parse(&mut errors, lexer);
-
-        assert_eq!(
-            result,
-            Ok(Box::new(Expression::BinaryOperation {
-                lhs: Box::new(Expression::Integer(1)),
-                operator: opcode,
-                rhs: Box::new(Expression::BinaryOperation {
-                    lhs: Box::new(Expression::Integer(2)),
-                    operator: Opcode::LogicalOr,
-                    rhs: Box::new(Expression::Integer(3)),
-                }),
-            }),)
-        );
-    }
-
-    #[rstest]
-    #[case("==", Opcode::Equals)]
-    #[case("!=", Opcode::NotEquals)]
-    #[case("/=", Opcode::NotEquals)]
-    #[case("~=", Opcode::ApproximatelyEquals)]
-    fn test_binary_operators_twelve_right(#[case] op_str: &str, #[case] opcode: Opcode) {
-        let input = format!("1||2{}3", op_str);
         let lexer = lexer::Lexer::new(&input);
         let parser = calc::ExpressionParser::new();
         let mut errors = Vec::new();
@@ -1009,11 +981,37 @@ mod tests {
             Ok(Box::new(Expression::BinaryOperation {
                 lhs: Box::new(Expression::BinaryOperation {
                     lhs: Box::new(Expression::Integer(1)),
-                    operator: Opcode::LogicalOr,
+                    operator: opcode,
                     rhs: Box::new(Expression::Integer(2)),
                 }),
-                operator: opcode,
+                operator: Opcode::LogicalOr,
                 rhs: Box::new(Expression::Integer(3)),
+            }),)
+        );
+    }
+
+    #[rstest]
+    #[case("==", Opcode::Equals)]
+    #[case("!=", Opcode::NotEquals)]
+    #[case("/=", Opcode::NotEquals)]
+    #[case("~=", Opcode::ApproximatelyEquals)]
+    fn test_binary_equality_and_logical_or_right(#[case] op_str: &str, #[case] opcode: Opcode) {
+        let input = format!("1||2{}3", op_str);
+        let lexer = lexer::Lexer::new(&input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+        let result = parser.parse(&mut errors, lexer);
+
+        assert_eq!(
+            result,
+            Ok(Box::new(Expression::BinaryOperation {
+                lhs: Box::new(Expression::Integer(1)),
+                operator: Opcode::LogicalOr,
+                rhs: Box::new(Expression::BinaryOperation {
+                    lhs: Box::new(Expression::Integer(2)),
+                    operator: opcode,
+                    rhs: Box::new(Expression::Integer(3)),
+                }),
             }),)
         );
     }
