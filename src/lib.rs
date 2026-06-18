@@ -388,5 +388,10 @@ mod tests {
                 Err(EvalError::InvalidType(_))
             ));
         }
+
+        #[test]
+        fn prop_arbitrary_short_input_never_panics(input in ".{0,64}") {
+            let _ = evaluate(&input, &HashMap::new());
+        }
     }
 }
