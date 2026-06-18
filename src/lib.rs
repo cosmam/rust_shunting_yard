@@ -187,5 +187,25 @@ mod tests {
                 Ok(Value::Integer(lhs / rhs))
             );
         }
+
+        #[test]
+        fn prop_integer_division_by_zero_returns_math_error(lhs in -1_000_000i64..1_000_000) {
+            let expression = format!("{lhs} / 0");
+
+            prop_assert_eq!(
+                evaluate(&expression, &HashMap::new()),
+                Err(EvalError::MathError("Division by zero".to_string()))
+            );
+        }
+
+        #[test]
+        fn prop_integer_modulo_by_zero_returns_math_error(lhs in -1_000_000i64..1_000_000) {
+            let expression = format!("{lhs} % 0");
+
+            prop_assert_eq!(
+                evaluate(&expression, &HashMap::new()),
+                Err(EvalError::MathError("Modulo by zero".to_string()))
+            );
+        }
     }
 }
