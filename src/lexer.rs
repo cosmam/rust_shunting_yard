@@ -56,6 +56,7 @@ impl<'input> Iterator for Lexer<'input> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use rstest::*;
 
     #[test]
@@ -1190,6 +1191,17 @@ mod tests {
                 4
             )))
         );
+    }
+
+    proptest! {
+        #[test]
+        fn prop_decimal_integer_lexes_as_integer(n in 0i64..i64::MAX) {
+            let text = n.to_string();
+            let mut lex = Lexer::new(&text);
+
+            prop_assert_eq!(lex.next(), Some(Ok((0, Token::Integer(n), text.len()))));
+            prop_assert_eq!(lex.next(), None);
+        }
     }
 
     #[rstest]
