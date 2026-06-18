@@ -96,6 +96,33 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    fn variable_name() -> impl Strategy<Value = String> {
+        "[a-zA-Z_][a-zA-Z0-9_]{0,12}".prop_filter("not a reserved function name", |name| {
+            !matches!(
+                name.as_str(),
+                "min"
+                    | "max"
+                    | "pow"
+                    | "mod"
+                    | "rem"
+                    | "round"
+                    | "cos"
+                    | "sin"
+                    | "tan"
+                    | "acos"
+                    | "asin"
+                    | "atan"
+                    | "abs"
+                    | "ln"
+                    | "log"
+                    | "exp"
+                    | "floor"
+                    | "ceil"
+                    | "ceiling"
+            )
+        })
+    }
+
     #[test]
     fn evaluate_parses_and_evaluates_expression_text() {
         let mut variables = HashMap::new();
@@ -205,6 +232,28 @@ mod tests {
             prop_assert_eq!(
                 evaluate(&expression, &HashMap::new()),
                 Err(EvalError::MathError("Modulo by zero".to_string()))
+            );
+        }
+
+        #[test]
+        fn prop_known_variable_evaluates_to_bound_value(
+            name in variable_name(),
+            value in -1_000_000i64..1_000_000,
+        ) {
+            let mut variables = HashMap::new();
+            variables.insert(name.clone(), Value::Integer(value));
+
+            prop_assert_eq!(
+                evaluate(&name, &variables),
+                Ok(Value::Integer(value))
+            );
+        }
+
+        #[test]
+        fn prop_unknown_variable_returns_unknown_variable(name in variable_name()) {
+            prop_assert_eq!(
+                evaluate(&name, &HashMap::new()),
+                Err(EvalError::UnknownVariable(name))
             );
         }
     }
