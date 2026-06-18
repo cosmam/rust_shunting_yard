@@ -288,5 +288,20 @@ mod tests {
                 Ok(Value::Integer(expected))
             );
         }
+
+        #[test]
+        fn prop_multiplication_binds_before_addition(
+            lhs in -1_000i64..1_000,
+            rhs in -1_000i64..1_000,
+            multiplier in -1_000i64..1_000,
+        ) {
+            let implicit = format!("{lhs} + {rhs} * {multiplier}");
+            let explicit = format!("{lhs} + ({rhs} * {multiplier})");
+
+            prop_assert_eq!(
+                evaluate(&implicit, &HashMap::new()),
+                evaluate(&explicit, &HashMap::new())
+            );
+        }
     }
 }
