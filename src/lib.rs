@@ -96,6 +96,23 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    #[derive(Clone, Debug)]
+    enum PropExpr {
+        Int(i64),
+        Add(Box<PropExpr>, Box<PropExpr>),
+        Mul(Box<PropExpr>, Box<PropExpr>),
+    }
+
+    impl PropExpr {
+        fn render(&self) -> String {
+            match self {
+                PropExpr::Int(value) => value.to_string(),
+                PropExpr::Add(lhs, rhs) => format!("({} + {})", lhs.render(), rhs.render()),
+                PropExpr::Mul(lhs, rhs) => format!("({} * {})", lhs.render(), rhs.render()),
+            }
+        }
+    }
+
     fn variable_name() -> impl Strategy<Value = String> {
         "[a-zA-Z_][a-zA-Z0-9_]{0,12}".prop_filter("not a reserved function name", |name| {
             !matches!(
@@ -121,6 +138,19 @@ mod tests {
                     | "ceiling"
             )
         })
+    }
+
+    fn prop_int_expr() -> impl Strategy<Value = PropExpr> {
+        (-2i64..3)
+            .prop_map(PropExpr::Int)
+            .prop_recursive(3, 16, 2, |inner| {
+                prop_oneof![
+                    (inner.clone(), inner.clone())
+                        .prop_map(|(lhs, rhs)| PropExpr::Add(Box::new(lhs), Box::new(rhs))),
+                    (inner.clone(), inner)
+                        .prop_map(|(lhs, rhs)| PropExpr::Mul(Box::new(lhs), Box::new(rhs))),
+                ]
+            })
     }
 
     #[test]
@@ -301,6 +331,16 @@ mod tests {
             prop_assert_eq!(
                 evaluate(&implicit, &HashMap::new()),
                 evaluate(&explicit, &HashMap::new())
+            );
+        }
+
+        #[test]
+        fn prop_generated_integer_expression_does_not_parser_error(expr in prop_int_expr()) {
+            let text = expr.render();
+
+            prop_assert_ne!(
+                evaluate(&text, &HashMap::new()),
+                Err(EvalError::ParserError)
             );
         }
     }
