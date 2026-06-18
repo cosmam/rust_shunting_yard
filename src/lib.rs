@@ -111,6 +111,14 @@ mod tests {
                 PropExpr::Mul(lhs, rhs) => format!("({} * {})", lhs.render(), rhs.render()),
             }
         }
+
+        fn reference_eval(&self) -> i64 {
+            match self {
+                PropExpr::Int(value) => *value,
+                PropExpr::Add(lhs, rhs) => lhs.reference_eval() + rhs.reference_eval(),
+                PropExpr::Mul(lhs, rhs) => lhs.reference_eval() * rhs.reference_eval(),
+            }
+        }
     }
 
     fn variable_name() -> impl Strategy<Value = String> {
@@ -341,6 +349,16 @@ mod tests {
             prop_assert_ne!(
                 evaluate(&text, &HashMap::new()),
                 Err(EvalError::ParserError)
+            );
+        }
+
+        #[test]
+        fn prop_generated_integer_expression_matches_reference_evaluator(expr in prop_int_expr()) {
+            let text = expr.render();
+
+            prop_assert_eq!(
+                evaluate(&text, &HashMap::new()),
+                Ok(Value::Integer(expr.reference_eval()))
             );
         }
     }
