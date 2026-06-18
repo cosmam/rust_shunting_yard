@@ -256,5 +256,37 @@ mod tests {
                 Err(EvalError::UnknownVariable(name))
             );
         }
+
+        #[test]
+        fn prop_min_matches_rust_min(values in prop::collection::vec(-1_000i64..1_000, 1..20)) {
+            let arguments = values
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let expression = format!("min({arguments})");
+            let expected = values.iter().copied().min().unwrap();
+
+            prop_assert_eq!(
+                evaluate(&expression, &HashMap::new()),
+                Ok(Value::Integer(expected))
+            );
+        }
+
+        #[test]
+        fn prop_max_matches_rust_max(values in prop::collection::vec(-1_000i64..1_000, 1..20)) {
+            let arguments = values
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let expression = format!("max({arguments})");
+            let expected = values.iter().copied().max().unwrap();
+
+            prop_assert_eq!(
+                evaluate(&expression, &HashMap::new()),
+                Ok(Value::Integer(expected))
+            );
+        }
     }
 }
