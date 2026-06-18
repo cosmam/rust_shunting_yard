@@ -94,6 +94,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn evaluate_parses_and_evaluates_expression_text() {
@@ -132,5 +133,59 @@ mod tests {
             evaluate_tokens(invalid_tokens, &variables),
             Err(EvalError::ParserError)
         );
+    }
+
+    proptest! {
+        #[test]
+        fn prop_evaluate_integer_addition_matches_rust(
+            lhs in -1_000_000i64..1_000_000,
+            rhs in -1_000_000i64..1_000_000,
+        ) {
+            let expression = format!("({lhs}) + ({rhs})");
+
+            prop_assert_eq!(
+                evaluate(&expression, &HashMap::new()),
+                Ok(Value::Integer(lhs + rhs))
+            );
+        }
+
+        #[test]
+        fn prop_evaluate_integer_subtraction_matches_rust(
+            lhs in -1_000_000i64..1_000_000,
+            rhs in -1_000_000i64..1_000_000,
+        ) {
+            let expression = format!("({lhs}) - ({rhs})");
+
+            prop_assert_eq!(
+                evaluate(&expression, &HashMap::new()),
+                Ok(Value::Integer(lhs - rhs))
+            );
+        }
+
+        #[test]
+        fn prop_evaluate_integer_multiplication_matches_rust(
+            lhs in -10_000i64..10_000,
+            rhs in -10_000i64..10_000,
+        ) {
+            let expression = format!("({lhs}) * ({rhs})");
+
+            prop_assert_eq!(
+                evaluate(&expression, &HashMap::new()),
+                Ok(Value::Integer(lhs * rhs))
+            );
+        }
+
+        #[test]
+        fn prop_evaluate_integer_division_matches_rust_for_nonzero_divisors(
+            lhs in -1_000_000i64..1_000_000,
+            rhs in (-1_000_000i64..1_000_000).prop_filter("nonzero divisor", |value| *value != 0),
+        ) {
+            let expression = format!("({lhs}) / ({rhs})");
+
+            prop_assert_eq!(
+                evaluate(&expression, &HashMap::new()),
+                Ok(Value::Integer(lhs / rhs))
+            );
+        }
     }
 }
