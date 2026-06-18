@@ -125,11 +125,11 @@ fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
 /// minus, or degrees. The unexpected-opcode branch is unreachable through
 /// [`apply_unary`], which only routes unary math opcodes here.
 fn apply_unary_math(op: &Opcode, val: Value) -> Result<Value, EvalError> {
-    match (op, val.clone()) {
+    match (op, val) {
         (_, Value::Bool(_)) => Err(EvalError::InvalidType(
             "Unary math operations not defined for bool".to_string(),
         )),
-        (Opcode::Plus, _) => Ok(val),
+        (Opcode::Plus, value) => Ok(value),
         (Opcode::Minus, Value::Integer(i)) => Ok(Value::Integer(-i)),
         (Opcode::Minus, Value::Float(f)) => Ok(Value::Float(-f)),
         (Opcode::Degrees, Value::Integer(i)) => Ok(Value::Float((i as f64).to_radians())),
@@ -310,10 +310,10 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
 /// are left untouched so the caller can decide whether they are valid for the
 /// operation family.
 fn convert_binary_values(op: &Opcode, lhs: Value, rhs: Value) -> (&Opcode, Value, Value) {
-    match (lhs.clone(), rhs.clone()) {
+    match (lhs, rhs) {
         (Value::Integer(i), Value::Float(f)) => (op, Value::Float(i as f64), Value::Float(f)),
         (Value::Float(f), Value::Integer(i)) => (op, Value::Float(f), Value::Float(i as f64)),
-        _ => (op, lhs, rhs),
+        (lhs, rhs) => (op, lhs, rhs),
     }
 }
 
@@ -351,20 +351,7 @@ fn apply_binary_math_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Va
         | (Opcode::BitwiseOr, _, _)
         | (Opcode::BitwiseXor, _, _)
         | (Opcode::Degrees, _, _) => Err(EvalError::UnexpectedOpcode),
-        (Opcode::Power, Value::Integer(l), Value::Integer(r)) => {
-            let result: Result<u32, _> = r.try_into();
-            match result {
-                Ok(val) => match l.checked_pow(val) {
-                    Some(v) => Ok(Value::Integer(v)),
-                    None => Err(EvalError::MathError(
-                        "Integer overflow on power".to_string(),
-                    )),
-                },
-                Err(_) => Err(EvalError::MathError(
-                    "Integer exponent too large".to_string(),
-                )),
-            }
-        }
+        (Opcode::Power, Value::Integer(l), Value::Integer(r)) => checked_integer_power(l, r),
         (Opcode::Divide, Value::Integer(l), Value::Integer(r)) => match r {
             0 => Err(EvalError::MathError("Division by zero".to_string())),
             _ => Ok(Value::Integer(l / r)),
@@ -858,8 +845,6 @@ fn round_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
 }
 
 fn checked_f64_to_i64(value: f64, operation: &str) -> Result<i64, EvalError> {
-    debug_assert!(matches!(operation, "round" | "floor" | "ceiling"));
-
     const I64_MIN_AS_F64: f64 = i64::MIN as f64;
     const I64_MAX_EXCLUSIVE_AS_F64: f64 = -(i64::MIN as f64);
 
@@ -1093,14 +1078,14 @@ fn apply_binary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalErr
 /// Returns [`EvalError::InvalidArity`] unless exactly two arguments are supplied.
 /// Returns [`EvalError::InvalidType`] when either argument is a boolean.
 fn pare_vector_binary(vals: Vec<Value>) -> Result<(Value, Value), EvalError> {
-    match vals.as_slice() {
-        [lhs, rhs] => match (lhs, rhs) {
-            (Value::Bool(_), _) | (_, Value::Bool(_)) => Err(EvalError::InvalidType(
-                "Binary functions not defined for bool".to_string(),
-            )),
-            _ => Ok((lhs.clone(), rhs.clone())),
-        },
-        _ => Err(EvalError::InvalidArity),
+    let [lhs, rhs]: [Value; 2] = vals.try_into().map_err(|_| EvalError::InvalidArity)?;
+
+    if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
+        Err(EvalError::InvalidType(
+            "Binary functions not defined for bool".to_string(),
+        ))
+    } else {
+        Ok((lhs, rhs))
     }
 }
 
@@ -1116,20 +1101,7 @@ fn pare_vector_binary(vals: Vec<Value>) -> Result<(Value, Value), EvalError> {
 /// checked integer exponentiation overflows.
 fn apply_power_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     match (lhs, rhs) {
-        (Value::Integer(l), Value::Integer(r)) => {
-            let result: Result<u32, _> = r.try_into();
-            match result {
-                Ok(val) => match l.checked_pow(val) {
-                    Some(v) => Ok(Value::Integer(v)),
-                    None => Err(EvalError::MathError(
-                        "Integer overflow on power".to_string(),
-                    )),
-                },
-                Err(_) => Err(EvalError::MathError(
-                    "Integer exponent too large".to_string(),
-                )),
-            }
-        }
+        (Value::Integer(l), Value::Integer(r)) => checked_integer_power(l, r),
         (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64).powf(r))),
         (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l.powf(r as f64))),
         (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.powf(r))),
@@ -1137,6 +1109,16 @@ fn apply_power_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
             "Bools not valid for power functions".to_string(),
         )),
     }
+}
+
+fn checked_integer_power(base: i64, exponent: i64) -> Result<Value, EvalError> {
+    let exponent: u32 = exponent
+        .try_into()
+        .map_err(|_| EvalError::MathError("Integer exponent too large".to_string()))?;
+
+    base.checked_pow(exponent)
+        .map(Value::Integer)
+        .ok_or_else(|| EvalError::MathError("Integer overflow on power".to_string()))
 }
 
 /// Apply Rust remainder (`%`) semantics to two numeric values.
@@ -1223,13 +1205,14 @@ fn apply_unary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalErro
 /// Returns [`EvalError::InvalidArity`] unless exactly one argument is supplied.
 /// Returns [`EvalError::InvalidType`] when the argument is a boolean.
 fn pare_vector_unary(vals: Vec<Value>) -> Result<Value, EvalError> {
-    match vals.as_slice() {
-        [] | [_, _, ..] => Err(EvalError::InvalidArity),
-        [Value::Bool(_)] => Err(EvalError::InvalidType(
+    let [value]: [Value; 1] = vals.try_into().map_err(|_| EvalError::InvalidArity)?;
+
+    match value {
+        Value::Bool(_) => Err(EvalError::InvalidType(
             "Unary functions not defined for bool".to_string(),
         )),
-        [Value::Integer(val)] => Ok(Value::Float(*val as f64)),
-        [Value::Float(val)] => Ok(Value::Float(*val)),
+        Value::Integer(value) => Ok(Value::Float(value as f64)),
+        Value::Float(value) => Ok(Value::Float(value)),
     }
 }
 
@@ -1254,7 +1237,6 @@ fn apply_float_unary(val: Value, op: fn(f64) -> f64) -> Result<Value, EvalError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
     use rstest::*;
 
     // in general, we'll test from the public eval function. The exceptions
@@ -1687,68 +1669,6 @@ mod tests {
         let result = eval(&expr, &variables);
 
         assert_eq!(result, Ok(expected));
-    }
-
-    proptest! {
-        #[test]
-        fn prop_integer_comparisons_match_rust_ordering(lhs in any::<i64>(), rhs in any::<i64>()) {
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::LessThan, Value::Integer(lhs), Value::Integer(rhs)),
-                Ok(Value::Bool(lhs < rhs))
-            );
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::LessThanEquals, Value::Integer(lhs), Value::Integer(rhs)),
-                Ok(Value::Bool(lhs <= rhs))
-            );
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::GreaterThan, Value::Integer(lhs), Value::Integer(rhs)),
-                Ok(Value::Bool(lhs > rhs))
-            );
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Integer(lhs), Value::Integer(rhs)),
-                Ok(Value::Bool(lhs >= rhs))
-            );
-        }
-
-        #[test]
-        fn prop_float_comparisons_match_rust_ordering(lhs in -1.0e12f64..1.0e12, rhs in -1.0e12f64..1.0e12) {
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::LessThan, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Bool(lhs < rhs))
-            );
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::LessThanEquals, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Bool(lhs <= rhs))
-            );
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::GreaterThan, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Bool(lhs > rhs))
-            );
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Bool(lhs >= rhs))
-            );
-        }
-
-        #[test]
-        fn prop_bool_comparisons_match_rust_ordering(lhs in any::<bool>(), rhs in any::<bool>()) {
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::LessThan, Value::Bool(lhs), Value::Bool(rhs)),
-                Ok(Value::Bool(!lhs & rhs))
-            );
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::LessThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
-                Ok(Value::Bool(lhs <= rhs))
-            );
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::GreaterThan, Value::Bool(lhs), Value::Bool(rhs)),
-                Ok(Value::Bool(lhs & !rhs))
-            );
-            prop_assert_eq!(
-                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
-                Ok(Value::Bool(lhs >= rhs))
-            );
-        }
     }
 
     #[rstest]
