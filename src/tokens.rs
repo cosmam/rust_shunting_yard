@@ -303,6 +303,8 @@ pub enum Token<'source> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use logos::Logos;
+    use proptest::prelude::*;
 
     #[test]
     fn test_parse_float_error_transformation() {
@@ -348,5 +350,174 @@ mod tests {
         let lexical_error = LexicalError::UnknownSymbol("Test".to_string());
 
         assert_eq!(format!("{}", lexical_error), "Unknown Symbol: Test");
+    }
+
+    fn single_token(input: &str) -> Option<Result<Token<'_>, LexicalError>> {
+        let mut lexer = Token::lexer(input);
+        let token = lexer.next();
+        assert_eq!(lexer.next(), None);
+        token
+    }
+
+    fn function_tokens() -> impl Strategy<Value = (&'static str, Token<'static>)> {
+        prop_oneof![
+            Just(("cos", Token::Cos)),
+            Just(("sin", Token::Sin)),
+            Just(("tan", Token::Tan)),
+            Just(("min", Token::Minimum)),
+            Just(("max", Token::Maximum)),
+            Just(("pow", Token::Power)),
+            Just(("mod", Token::Mod)),
+            Just(("rem", Token::Remainder)),
+            Just(("round", Token::Round)),
+            Just(("acos", Token::ACos)),
+            Just(("asin", Token::ASin)),
+            Just(("atan", Token::ATan)),
+            Just(("abs", Token::AbsoluteValue)),
+            Just(("ln", Token::NaturalLog)),
+            Just(("log", Token::Log)),
+            Just(("exp", Token::Euler)),
+            Just(("floor", Token::Floor)),
+            Just(("ceil", Token::Ceiling)),
+            Just(("ceiling", Token::Ceiling)),
+        ]
+    }
+
+    fn operator_tokens() -> impl Strategy<Value = (&'static str, Token<'static>)> {
+        prop_oneof![
+            Just(("(", Token::LeftParen)),
+            Just((")", Token::RightParen)),
+            Just(("==", Token::Equals)),
+            Just(("!=", Token::NotEquals)),
+            Just(("/=", Token::NotEquals)),
+            Just(("<=", Token::LessThanEquals)),
+            Just((">=", Token::GreaterThanEquals)),
+            Just(("~=", Token::ApproximatelyEquals)),
+            Just(("<", Token::LessThan)),
+            Just((">", Token::GreaterThan)),
+            Just(("+", Token::Plus)),
+            Just(("-", Token::Minus)),
+            Just(("**", Token::Exponentiation)),
+            Just(("*", Token::Multiply)),
+            Just(("/", Token::Divide)),
+            Just(("%", Token::Modulo)),
+            Just(("&&", Token::LogicalAnd)),
+            Just(("||", Token::LogicalOr)),
+            Just(("<<", Token::BitshiftLeft)),
+            Just((">>", Token::BitshiftRight)),
+            Just(("°", Token::Degrees)),
+            Just(("!", Token::LogicalNot)),
+            Just(("&", Token::BitwiseAnd)),
+            Just(("^", Token::BitwiseXor)),
+            Just(("~", Token::BitwiseNot)),
+            Just(("|", Token::BitwiseOr)),
+            Just((",", Token::Comma)),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn prop_decimal_integer_lexes_as_integer(value in 0i64..=i64::MAX) {
+            let input = value.to_string();
+
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Integer(value))));
+        }
+
+        #[test]
+        fn prop_hexadecimal_lexes_as_hexadecimal(value in 0i64..=i64::MAX) {
+            let input = format!("0x{value:x}");
+
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Hexadecimal(value))));
+        }
+
+        #[test]
+        fn prop_plain_float_lexes_as_float(
+            whole in 0u64..1_000_000,
+            fraction in 0u32..1_000_000,
+        ) {
+            let input = format!("{whole}.{fraction:06}");
+            let expected = input.parse::<f64>().unwrap();
+
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Float(expected))));
+        }
+
+        #[test]
+        fn prop_exponent_float_lexes_as_float(
+            mantissa in 1u64..1_000_000,
+            exponent in -20i32..20,
+        ) {
+            let input = format!("{mantissa}e{exponent}");
+            let expected = input.parse::<f64>().unwrap();
+
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Float(expected))));
+        }
+
+        #[test]
+        fn prop_lowercase_bool_lexes_as_bool(value in any::<bool>()) {
+            let input = value.to_string();
+
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Bool(value))));
+        }
+
+        #[test]
+        fn prop_uppercase_bool_reports_invalid_bool(value in any::<bool>()) {
+            let input = value.to_string().to_uppercase();
+
+            prop_assert!(matches!(
+                single_token(&input),
+                Some(Err(LexicalError::InvalidBool(_)))
+            ));
+        }
+
+        #[test]
+        fn prop_variable_names_lex_as_variables(name in "[a-zA-Z_][a-zA-Z0-9_\\.]{0,12}(\\[[0-9]{1,4}\\])?") {
+            prop_assert_eq!(single_token(&name), Some(Ok(Token::Variable(name.as_str()))));
+        }
+
+        #[test]
+        fn prop_function_names_lex_as_function_tokens((input, expected) in function_tokens()) {
+            prop_assert_eq!(single_token(input), Some(Ok(expected)));
+        }
+
+        #[test]
+        fn prop_operator_spellings_lex_as_operator_tokens((input, expected) in operator_tokens()) {
+            prop_assert_eq!(single_token(input), Some(Ok(expected)));
+        }
+
+        #[test]
+        fn prop_unknown_symbols_report_unknown_symbol(input in "[@#$?]{1}") {
+            prop_assert_eq!(
+                single_token(&input),
+                Some(Err(LexicalError::UnknownSymbol(input.clone())))
+            );
+        }
+
+        #[test]
+        fn prop_large_decimal_reports_invalid_integer(
+            value in 18_446_744_073_709_551_616u128..100_000_000_000_000_000_000u128,
+        ) {
+            let input = value.to_string();
+
+            prop_assert!(matches!(
+                single_token(&input),
+                Some(Err(LexicalError::InvalidInteger(_)))
+            ));
+        }
+
+        #[test]
+        fn prop_non_finite_float_literals_report_invalid_float(input in prop_oneof![
+            Just("NaN".to_string()),
+            Just("nan".to_string()),
+            Just("NAN".to_string()),
+            Just("NaN32".to_string()),
+            Just("NaN64".to_string()),
+            Just("1e309".to_string()),
+            Just("12.1e-320".to_string()),
+        ]) {
+            prop_assert!(matches!(
+                single_token(&input),
+                Some(Err(LexicalError::InvalidFloat(_)))
+            ));
+        }
     }
 }
