@@ -1237,6 +1237,7 @@ fn apply_float_unary(val: Value, op: fn(f64) -> f64) -> Result<Value, EvalError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use rstest::*;
 
     // in general, we'll test from the public eval function. The exceptions
@@ -1249,6 +1250,46 @@ mod tests {
             Value::Integer(value) => Expression::Integer(value),
             Value::Float(value) => Expression::Float(value),
         }
+    }
+
+    fn small_i64() -> impl Strategy<Value = i64> {
+        -1_000_000i64..1_000_000
+    }
+
+    fn tiny_i64() -> impl Strategy<Value = i64> {
+        -1_000i64..1_000
+    }
+
+    fn nonzero_tiny_i64() -> impl Strategy<Value = i64> {
+        tiny_i64().prop_filter("nonzero integer", |value| *value != 0)
+    }
+
+    fn small_f64() -> impl Strategy<Value = f64> {
+        -1_000_000.0f64..1_000_000.0
+    }
+
+    fn tiny_f64() -> impl Strategy<Value = f64> {
+        -1_000.0f64..1_000.0
+    }
+
+    fn nonzero_tiny_f64() -> impl Strategy<Value = f64> {
+        tiny_f64().prop_filter("nonzero float", |value| *value != 0.0)
+    }
+
+    fn positive_f64() -> impl Strategy<Value = f64> {
+        0.000001f64..1_000_000.0
+    }
+
+    fn unit_f64() -> impl Strategy<Value = f64> {
+        -1.0f64..1.0
+    }
+
+    fn generated_value() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            any::<bool>().prop_map(Value::Bool),
+            small_i64().prop_map(Value::Integer),
+            small_f64().prop_map(Value::Float),
+        ]
     }
 
     /************ Test helper tests *************/
@@ -1669,6 +1710,830 @@ mod tests {
         let result = eval(&expr, &variables);
 
         assert_eq!(result, Ok(expected));
+    }
+
+    proptest! {
+        #[test]
+        fn prop_eval_literals_return_their_values(value in generated_value()) {
+            let expression = value_to_expression(value.clone());
+
+            prop_assert_eq!(eval(&expression, &HashMap::new()), Ok(value));
+        }
+
+        #[test]
+        fn prop_eval_known_variable_returns_bound_value(value in generated_value()) {
+            let mut variables = HashMap::new();
+            variables.insert("x".to_string(), value.clone());
+
+            prop_assert_eq!(eval(&Expression::Variable("x"), &variables), Ok(value));
+        }
+
+        #[test]
+        fn prop_eval_dispatch_error_paths(_unit in Just(())) {
+            prop_assert_eq!(eval(&Expression::Error, &HashMap::new()), Err(EvalError::InvalidExpression));
+            prop_assert_eq!(
+                eval(&Expression::LexicalError(crate::tokens::LexicalError::InvalidToken), &HashMap::new()),
+                Err(EvalError::InvalidExpression)
+            );
+            prop_assert_eq!(
+                eval(&Expression::Variable("missing"), &HashMap::new()),
+                Err(EvalError::UnknownVariable("missing".to_string()))
+            );
+            prop_assert_eq!(
+                eval(
+                    &Expression::UnaryOperation {
+                        operator: Opcode::Plus,
+                        value: Box::new(Expression::Variable("missing")),
+                    },
+                    &HashMap::new(),
+                ),
+                Err(EvalError::UnknownVariable("missing".to_string()))
+            );
+            prop_assert_eq!(
+                eval(
+                    &Expression::BinaryOperation {
+                        lhs: Box::new(Expression::Variable("missing")),
+                        operator: Opcode::Plus,
+                        rhs: Box::new(Expression::Integer(1)),
+                    },
+                    &HashMap::new(),
+                ),
+                Err(EvalError::UnknownVariable("missing".to_string()))
+            );
+            prop_assert_eq!(
+                eval(
+                    &Expression::Function {
+                        func: Func::Min,
+                        arguments: vec![Expression::Integer(1), Expression::Error],
+                    },
+                    &HashMap::new(),
+                ),
+                Err(EvalError::InvalidExpression)
+            );
+        }
+
+        #[test]
+        fn prop_unary_error_paths(_unit in Just(())) {
+            prop_assert_eq!(
+                apply_unary(&Opcode::LogicalOr, Value::Integer(1)),
+                Err(EvalError::InvalidArity)
+            );
+            prop_assert!(matches!(
+                apply_unary_math(&Opcode::Plus, Value::Bool(true)),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_unary_math(&Opcode::Equals, Value::Integer(1)),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert!(matches!(
+                apply_bitwise_not(Value::Float(1.0)),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_logical_not(Value::Integer(1)),
+                Err(EvalError::InvalidType(_))
+            ));
+        }
+
+        #[test]
+        fn prop_integer_unary_math_matches_rust(value in small_i64()) {
+            prop_assert_eq!(
+                apply_unary(&Opcode::Plus, Value::Integer(value)),
+                Ok(Value::Integer(value))
+            );
+            prop_assert_eq!(
+                apply_unary(&Opcode::Minus, Value::Integer(value)),
+                Ok(Value::Integer(-value))
+            );
+            prop_assert_eq!(
+                apply_unary(&Opcode::Degrees, Value::Integer(value)),
+                Ok(Value::Float((value as f64).to_radians()))
+            );
+        }
+
+        #[test]
+        fn prop_float_unary_math_matches_rust(value in small_f64()) {
+            prop_assert_eq!(
+                apply_unary(&Opcode::Plus, Value::Float(value)),
+                Ok(Value::Float(value))
+            );
+            prop_assert_eq!(
+                apply_unary(&Opcode::Minus, Value::Float(value)),
+                Ok(Value::Float(-value))
+            );
+            prop_assert_eq!(
+                apply_unary(&Opcode::Degrees, Value::Float(value)),
+                Ok(Value::Float(value.to_radians()))
+            );
+        }
+
+        #[test]
+        fn prop_bitwise_and_logical_not_match_rust(value in any::<bool>(), integer in any::<i64>()) {
+            prop_assert_eq!(
+                apply_unary(&Opcode::BitwiseNot, Value::Bool(value)),
+                Ok(Value::Bool(!value))
+            );
+            prop_assert_eq!(
+                apply_unary(&Opcode::LogicalNot, Value::Bool(value)),
+                Ok(Value::Bool(!value))
+            );
+            prop_assert_eq!(
+                apply_unary(&Opcode::BitwiseNot, Value::Integer(integer)),
+                Ok(Value::Integer(!integer))
+            );
+        }
+
+        #[test]
+        fn prop_integer_binary_math_matches_rust(lhs in tiny_i64(), rhs in nonzero_tiny_i64()) {
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Plus, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs + rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Minus, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs - rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Multiply, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs * rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Divide, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs / rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Modulo, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs % rhs))
+            );
+        }
+
+        #[test]
+        fn prop_integer_power_matches_checked_pow(base in -10i64..10, exponent in 0i64..10) {
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Power, Value::Integer(base), Value::Integer(exponent)),
+                base.checked_pow(exponent as u32)
+                    .map(Value::Integer)
+                    .ok_or_else(|| EvalError::MathError("Integer overflow on power".to_string()))
+            );
+        }
+
+        #[test]
+        fn prop_float_binary_math_matches_rust(lhs in tiny_f64(), rhs in nonzero_tiny_f64()) {
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Plus, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Float(lhs + rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Minus, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Float(lhs - rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Multiply, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Float(lhs * rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Divide, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Float(lhs / rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Modulo, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Float(lhs % rhs))
+            );
+        }
+
+        #[test]
+        fn prop_mixed_numeric_binary_math_promotes_to_float(lhs in tiny_i64(), rhs in nonzero_tiny_f64()) {
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Plus, Value::Integer(lhs), Value::Float(rhs)),
+                Ok(Value::Float(lhs as f64 + rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Multiply, Value::Float(rhs), Value::Integer(lhs)),
+                Ok(Value::Float(rhs * lhs as f64))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Divide, Value::Integer(lhs), Value::Float(rhs)),
+                Ok(Value::Float(lhs as f64 / rhs))
+            );
+        }
+
+        #[test]
+        fn prop_binary_error_paths(_unit in Just(())) {
+            prop_assert_eq!(
+                apply_binary(&Opcode::ApproximatelyEquals, Value::Integer(1), Value::Integer(1)),
+                Ok(Value::Bool(true))
+            );
+            prop_assert_eq!(
+                apply_binary(&Opcode::BitwiseAnd, Value::Integer(1), Value::Integer(3)),
+                Ok(Value::Integer(1))
+            );
+            prop_assert_eq!(
+                apply_binary(&Opcode::BitshiftLeft, Value::Integer(1), Value::Integer(2)),
+                Ok(Value::Integer(4))
+            );
+            prop_assert_eq!(
+                apply_binary(&Opcode::LogicalAnd, Value::Bool(true), Value::Bool(false)),
+                Ok(Value::Bool(false))
+            );
+            prop_assert_eq!(
+                apply_binary(&Opcode::Degrees, Value::Integer(1), Value::Integer(1)),
+                Err(EvalError::InvalidArity)
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::Plus, Value::Integer(1), Value::Integer(1)),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert!(matches!(
+                apply_binary_comparison(&Opcode::Equals, Value::Integer(1), Value::Bool(true)),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Divide, Value::Integer(1), Value::Integer(0)),
+                Err(EvalError::MathError("Division by zero".to_string()))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Modulo, Value::Integer(1), Value::Integer(0)),
+                Err(EvalError::MathError("Modulo by zero".to_string()))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Divide, Value::Float(1.0), Value::Float(0.0)),
+                Err(EvalError::MathError("Division by zero".to_string()))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Modulo, Value::Float(1.0), Value::Float(0.0)),
+                Err(EvalError::MathError("Modulo by zero".to_string()))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Power, Value::Float(2.0), Value::Float(3.0)),
+                Ok(Value::Float(8.0))
+            );
+            prop_assert_eq!(
+                apply_binary_math_operation(&Opcode::Equals, Value::Integer(1), Value::Integer(1)),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert!(matches!(
+                apply_binary_math_operation(&Opcode::Plus, Value::Bool(true), Value::Bool(false)),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_binary_bit_operation(&Opcode::Plus, Value::Integer(1), Value::Integer(1)),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert!(matches!(
+                apply_binary_bit_operation(&Opcode::BitwiseAnd, Value::Float(1.0), Value::Integer(1)),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_binary_bit_operation(&Opcode::BitwiseAnd, Value::Bool(true), Value::Integer(1)),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_bitshift_operation(&Opcode::Plus, Value::Integer(1), Value::Integer(1)),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert!(matches!(
+                apply_bitshift_operation(&Opcode::BitshiftLeft, Value::Bool(true), Value::Integer(1)),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_binary_logical_operation(&Opcode::Plus, Value::Bool(true), Value::Bool(false)),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert!(matches!(
+                apply_binary_logical_operation(&Opcode::LogicalAnd, Value::Integer(1), Value::Bool(false)),
+                Err(EvalError::InvalidType(_))
+            ));
+        }
+
+        #[test]
+        fn prop_integer_comparisons_match_rust_ordering(lhs in any::<i64>(), rhs in any::<i64>()) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThan, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs < rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThanEquals, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs <= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThan, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs > rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs >= rhs))
+            );
+        }
+
+        #[test]
+        fn prop_integer_equality_comparisons_match_rust(lhs in any::<i64>(), rhs in any::<i64>()) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::Equals, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs == rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::NotEquals, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs != rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::ApproximatelyEquals, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Bool(lhs == rhs))
+            );
+        }
+
+        #[test]
+        fn prop_bool_comparisons_match_rust_ordering(lhs in any::<bool>(), rhs in any::<bool>()) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThan, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(!lhs & rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs <= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThan, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs & !rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs >= rhs))
+            );
+        }
+
+        #[test]
+        fn prop_bool_equality_comparisons_match_rust(lhs in any::<bool>(), rhs in any::<bool>()) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::Equals, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs == rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::NotEquals, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs != rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::ApproximatelyEquals, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs == rhs))
+            );
+        }
+
+        #[test]
+        fn prop_float_comparisons_match_rust_ordering(lhs in small_f64(), rhs in small_f64()) {
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::Equals, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs == rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::NotEquals, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs != rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThan, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs < rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::LessThanEquals, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs <= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThan, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs > rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::GreaterThanEquals, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool(lhs >= rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_comparison(&Opcode::ApproximatelyEquals, Value::Float(lhs), Value::Float(rhs)),
+                Ok(Value::Bool((lhs - rhs).abs() <= (lhs.max(rhs) * EPSILON)))
+            );
+        }
+
+        #[test]
+        fn prop_bitwise_integer_operations_match_rust(lhs in any::<i64>(), rhs in any::<i64>()) {
+            prop_assert_eq!(
+                apply_binary_bit_operation(&Opcode::BitwiseAnd, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs & rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_bit_operation(&Opcode::BitwiseOr, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs | rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_bit_operation(&Opcode::BitwiseXor, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs ^ rhs))
+            );
+        }
+
+        #[test]
+        fn prop_bitwise_bool_operations_match_rust(lhs in any::<bool>(), rhs in any::<bool>()) {
+            prop_assert_eq!(
+                apply_binary_bit_operation(&Opcode::BitwiseAnd, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs & rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_bit_operation(&Opcode::BitwiseOr, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs | rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_bit_operation(&Opcode::BitwiseXor, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs ^ rhs))
+            );
+        }
+
+        #[test]
+        fn prop_bitshift_operations_match_rust(lhs in any::<i64>(), rhs in 0i64..63) {
+            prop_assert_eq!(
+                apply_bitshift_operation(&Opcode::BitshiftLeft, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs << rhs))
+            );
+            prop_assert_eq!(
+                apply_bitshift_operation(&Opcode::BitshiftRight, Value::Integer(lhs), Value::Integer(rhs)),
+                Ok(Value::Integer(lhs >> rhs))
+            );
+        }
+
+        #[test]
+        fn prop_logical_binary_operations_match_rust(lhs in any::<bool>(), rhs in any::<bool>()) {
+            prop_assert_eq!(
+                apply_binary_logical_operation(&Opcode::LogicalAnd, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs && rhs))
+            );
+            prop_assert_eq!(
+                apply_binary_logical_operation(&Opcode::LogicalOr, Value::Bool(lhs), Value::Bool(rhs)),
+                Ok(Value::Bool(lhs || rhs))
+            );
+        }
+
+        #[test]
+        fn prop_min_max_integer_vectors_match_rust(values in proptest::collection::vec(small_i64(), 1..32)) {
+            let arguments = values.iter().copied().map(Value::Integer).collect::<Vec<_>>();
+            let min = values.iter().copied().min().unwrap();
+            let max = values.iter().copied().max().unwrap();
+
+            prop_assert_eq!(apply_function(&Func::Min, arguments.clone()), Ok(Value::Integer(min)));
+            prop_assert_eq!(apply_function(&Func::Max, arguments), Ok(Value::Integer(max)));
+        }
+
+        #[test]
+        fn prop_min_max_mixed_numeric_vectors_promote_to_float(
+            integers in proptest::collection::vec(small_i64(), 1..16),
+            float in small_f64(),
+        ) {
+            let mut arguments = integers.iter().copied().map(Value::Integer).collect::<Vec<_>>();
+            arguments.push(Value::Float(float));
+            let expected_values = integers
+                .iter()
+                .copied()
+                .map(|value| value as f64)
+                .chain(std::iter::once(float))
+                .collect::<Vec<_>>();
+            let min = expected_values
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min);
+            let max = expected_values
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+
+            prop_assert_eq!(apply_function(&Func::Min, arguments.clone()), Ok(Value::Float(min)));
+            prop_assert_eq!(apply_function(&Func::Max, arguments), Ok(Value::Float(max)));
+        }
+
+        #[test]
+        fn prop_function_validation_error_paths(_unit in Just(())) {
+            prop_assert_eq!(apply_function(&Func::Min, vec![]), Err(EvalError::InvalidArity));
+            prop_assert!(matches!(
+                apply_function(&Func::Min, vec![Value::Bool(true)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_n_nary_function(&Func::Power, vec![Value::Integer(1), Value::Integer(2)]),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert!(matches!(
+                apply_min_function(vec![Value::Integer(1), Value::Float(1.0)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_min_function(vec![Value::Float(1.0), Value::Integer(1)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_min_function(vec![Value::Bool(true)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_max_function(vec![Value::Integer(1), Value::Float(1.0)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_max_function(vec![Value::Float(1.0), Value::Integer(1)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_max_function(vec![Value::Bool(true)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_rounding_function(&Func::Min, vec![Value::Integer(1)]),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert!(matches!(
+                pare_vector_rounding(vec![Value::Bool(true)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                pare_vector_rounding(vec![Value::Integer(1), Value::Integer(1), Value::Integer(1)]),
+                Err(EvalError::InvalidArity)
+            ));
+            prop_assert!(matches!(
+                apply_round_function(Value::Bool(true), None),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_floor_function(Value::Bool(true), None),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_ceiling_function(Value::Bool(true), None),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_function(&Func::Round, vec![Value::Integer(11), Value::Integer(10)]),
+                Ok(Value::Integer(10))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Floor, vec![Value::Integer(11), Value::Integer(10)]),
+                Ok(Value::Integer(10))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Ceiling, vec![Value::Integer(11), Value::Integer(10)]),
+                Ok(Value::Integer(20))
+            );
+            prop_assert_eq!(
+                apply_rounding_function(&Func::Round, vec![Value::Integer(11), Value::Integer(10)]),
+                Ok(Value::Integer(10))
+            );
+            prop_assert_eq!(
+                apply_rounding_function(&Func::Floor, vec![Value::Integer(11), Value::Integer(10)]),
+                Ok(Value::Integer(10))
+            );
+            prop_assert_eq!(
+                apply_rounding_function(&Func::Ceiling, vec![Value::Integer(11), Value::Integer(10)]),
+                Ok(Value::Integer(20))
+            );
+            prop_assert_eq!(
+                pare_vector_rounding(vec![Value::Integer(11), Value::Integer(10)]),
+                Ok((Value::Integer(11), Some(Value::Integer(10))))
+            );
+            prop_assert_eq!(
+                apply_binary_function(&Func::Min, vec![Value::Integer(1), Value::Integer(2)]),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert_eq!(
+                apply_binary_function(&Func::Power, vec![Value::Integer(1)]),
+                Err(EvalError::InvalidArity)
+            );
+            prop_assert!(matches!(
+                apply_binary_function(&Func::Power, vec![Value::Bool(true), Value::Integer(2)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_unary_function(&Func::Min, vec![Value::Integer(1)]),
+                Err(EvalError::UnexpectedOpcode)
+            );
+            prop_assert_eq!(
+                apply_unary_function(&Func::Cos, vec![]),
+                Err(EvalError::InvalidArity)
+            );
+            prop_assert!(matches!(
+                apply_unary_function(&Func::Cos, vec![Value::Bool(true)]),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert_eq!(
+                apply_float_unary(Value::Integer(1), f64::cos),
+                Err(EvalError::UnexpectedOpcode)
+            );
+        }
+
+        #[test]
+        fn prop_integer_rounding_functions_match_expected_precision(value in small_i64(), precision in 1i64..1_000) {
+            let floored = value.div_euclid(precision) * precision;
+            let ceiling = if floored == value { floored } else { floored + precision };
+            let rounded = value.try_round_to(precision, Tie::Up).unwrap();
+
+            prop_assert_eq!(
+                apply_round_function(Value::Integer(value), Some(Value::Integer(precision))),
+                Ok(Value::Integer(rounded))
+            );
+            prop_assert_eq!(
+                apply_floor_function(Value::Integer(value), Some(Value::Integer(precision))),
+                Ok(Value::Integer(floored))
+            );
+            prop_assert_eq!(
+                apply_ceiling_function(Value::Integer(value), Some(Value::Integer(precision))),
+                Ok(Value::Integer(ceiling))
+            );
+        }
+
+        #[test]
+        fn prop_rounding_functions_cover_no_precision_and_float_precision(value in -10_000.0f64..10_000.0, precision in 0.1f64..100.0) {
+            let integer = value as i64;
+
+            prop_assert_eq!(
+                apply_round_function(Value::Integer(integer), None),
+                round_i64(integer, 1).map(Value::Integer)
+            );
+            prop_assert_eq!(
+                apply_floor_function(Value::Integer(integer), None),
+                floor_i64(integer, 1).map(Value::Integer)
+            );
+            prop_assert_eq!(
+                apply_ceiling_function(Value::Integer(integer), None),
+                ceiling_i64(integer, 1).map(Value::Integer)
+            );
+            prop_assert_eq!(
+                apply_round_function(Value::Float(value), None),
+                round_f64(value, 1.0).map(Value::Float)
+            );
+            prop_assert_eq!(
+                apply_floor_function(Value::Float(value), None),
+                floor_f64(value, 1.0).map(Value::Float)
+            );
+            prop_assert_eq!(
+                apply_ceiling_function(Value::Float(value), None),
+                ceiling_f64(value, 1.0).map(Value::Float)
+            );
+            prop_assert_eq!(
+                apply_round_function(Value::Integer(value as i64), Some(Value::Float(precision))),
+                round_f64(value as i64 as f64, precision).map(Value::Float)
+            );
+            prop_assert_eq!(
+                apply_floor_function(Value::Integer(value as i64), Some(Value::Float(precision))),
+                floor_f64(value as i64 as f64, precision).map(Value::Float)
+            );
+            prop_assert_eq!(
+                apply_ceiling_function(Value::Integer(value as i64), Some(Value::Float(precision))),
+                ceiling_f64(value as i64 as f64, precision).map(Value::Float)
+            );
+            prop_assert_eq!(
+                apply_round_function(Value::Float(value), Some(Value::Float(precision))),
+                round_f64(value, precision).map(Value::Float)
+            );
+            prop_assert_eq!(
+                apply_floor_function(Value::Float(value), Some(Value::Float(precision))),
+                floor_f64(value, precision).map(Value::Float)
+            );
+            prop_assert_eq!(
+                apply_ceiling_function(Value::Float(value), Some(Value::Float(precision))),
+                ceiling_f64(value, precision).map(Value::Float)
+            );
+            prop_assert_eq!(
+                apply_round_function(Value::Float(value), Some(Value::Integer(1))),
+                round_f64_to_i64(value, 1).map(Value::Integer)
+            );
+            prop_assert_eq!(
+                apply_floor_function(Value::Float(value), Some(Value::Integer(1))),
+                floor_f64_to_i64(value, 1).map(Value::Integer)
+            );
+            prop_assert_eq!(
+                apply_ceiling_function(Value::Float(value), Some(Value::Integer(1))),
+                ceiling_f64_to_i64(value, 1).map(Value::Integer)
+            );
+        }
+
+        #[test]
+        fn prop_rounding_functions_reject_nonpositive_integer_precision(value in small_i64(), precision in -1_000i64..=0) {
+            prop_assert!(matches!(
+                apply_round_function(Value::Integer(value), Some(Value::Integer(precision))),
+                Err(EvalError::MathError(_))
+            ));
+            prop_assert!(matches!(
+                apply_floor_function(Value::Integer(value), Some(Value::Integer(precision))),
+                Err(EvalError::MathError(_))
+            ));
+            prop_assert!(matches!(
+                apply_ceiling_function(Value::Integer(value), Some(Value::Integer(precision))),
+                Err(EvalError::MathError(_))
+            ));
+        }
+
+        #[test]
+        fn prop_float_rounding_rejects_nonpositive_precision(value in small_f64(), precision in -1_000.0f64..=0.0) {
+            prop_assert!(matches!(round_f64(value, precision), Err(EvalError::MathError(_))));
+            prop_assert!(matches!(floor_f64(value, precision), Err(EvalError::MathError(_))));
+            prop_assert!(matches!(ceiling_f64(value, precision), Err(EvalError::MathError(_))));
+            prop_assert!(matches!(round_f64(f64::INFINITY, 1.0), Err(EvalError::MathError(_))));
+            prop_assert!(matches!(floor_f64(f64::INFINITY, 1.0), Err(EvalError::MathError(_))));
+            prop_assert!(matches!(ceiling_f64(f64::INFINITY, 1.0), Err(EvalError::MathError(_))));
+        }
+
+        #[test]
+        fn prop_float_to_integer_conversion_checks_bounds(value in -1_000_000.0f64..1_000_000.0) {
+            prop_assert_eq!(checked_f64_to_i64(value, "test"), Ok(value as i64));
+            prop_assert!(matches!(
+                checked_f64_to_i64(f64::INFINITY, "test"),
+                Err(EvalError::MathError(_))
+            ));
+        }
+
+        #[test]
+        fn prop_binary_functions_match_rust(lhs in tiny_i64(), rhs in nonzero_tiny_i64()) {
+            prop_assert_eq!(
+                apply_function(&Func::Modulo, vec![Value::Integer(lhs), Value::Integer(rhs)]),
+                Ok(Value::Integer(lhs % rhs))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Remainder, vec![Value::Integer(lhs), Value::Integer(rhs)]),
+                Ok(Value::Integer(lhs.rem_euclid(rhs)))
+            );
+        }
+
+        #[test]
+        fn prop_binary_functions_mixed_numeric_and_invalid_types(lhs in tiny_i64(), rhs in nonzero_tiny_f64()) {
+            let integer_power_base = lhs.abs();
+            let float_power_base = rhs.abs();
+
+            prop_assert_eq!(
+                apply_function(&Func::Power, vec![Value::Integer(integer_power_base), Value::Float(rhs)]),
+                Ok(Value::Float((integer_power_base as f64).powf(rhs)))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Power, vec![Value::Float(float_power_base), Value::Integer(lhs)]),
+                Ok(Value::Float(float_power_base.powf(lhs as f64)))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Power, vec![Value::Float(float_power_base), Value::Float(rhs)]),
+                Ok(Value::Float(float_power_base.powf(rhs)))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Modulo, vec![Value::Integer(lhs), Value::Float(rhs)]),
+                Ok(Value::Float((lhs as f64) % rhs))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Modulo, vec![Value::Float(rhs), Value::Integer(1)]),
+                Ok(Value::Float(rhs % 1.0))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Modulo, vec![Value::Float(rhs), Value::Float(rhs)]),
+                Ok(Value::Float(rhs % rhs))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Remainder, vec![Value::Integer(lhs), Value::Float(rhs)]),
+                Ok(Value::Float((lhs as f64).rem_euclid(rhs)))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Remainder, vec![Value::Float(rhs), Value::Integer(1)]),
+                Ok(Value::Float(rhs.rem_euclid(1.0)))
+            );
+            prop_assert_eq!(
+                apply_function(&Func::Remainder, vec![Value::Float(rhs), Value::Float(rhs)]),
+                Ok(Value::Float(rhs.rem_euclid(rhs)))
+            );
+            prop_assert!(matches!(
+                apply_power_function(Value::Bool(true), Value::Integer(1)),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_modulo_function(Value::Bool(true), Value::Integer(1)),
+                Err(EvalError::InvalidType(_))
+            ));
+            prop_assert!(matches!(
+                apply_remainder_function(Value::Bool(true), Value::Integer(1)),
+                Err(EvalError::InvalidType(_))
+            ));
+        }
+
+        #[test]
+        fn prop_power_function_matches_checked_pow(base in -10i64..10, exponent in 0i64..10) {
+            prop_assert_eq!(
+                apply_function(&Func::Power, vec![Value::Integer(base), Value::Integer(exponent)]),
+                base.checked_pow(exponent as u32)
+                    .map(Value::Integer)
+                    .ok_or_else(|| EvalError::MathError("Integer overflow on power".to_string()))
+            );
+        }
+
+        #[test]
+        fn prop_unary_float_functions_match_rust(value in -10.0f64..10.0) {
+            prop_assert_eq!(apply_function(&Func::Cos, vec![Value::Float(value)]), Ok(Value::Float(value.cos())));
+            prop_assert_eq!(apply_function(&Func::Sin, vec![Value::Float(value)]), Ok(Value::Float(value.sin())));
+            prop_assert_eq!(apply_function(&Func::Tan, vec![Value::Float(value)]), Ok(Value::Float(value.tan())));
+            prop_assert_eq!(apply_function(&Func::ATan, vec![Value::Float(value)]), Ok(Value::Float(value.atan())));
+            prop_assert_eq!(apply_function(&Func::Abs, vec![Value::Float(value)]), Ok(Value::Float(value.abs())));
+            prop_assert_eq!(apply_function(&Func::Exp, vec![Value::Float(value)]), Ok(Value::Float(value.exp())));
+        }
+
+        #[test]
+        fn prop_unary_domain_limited_float_functions_match_rust(unit in unit_f64(), positive in positive_f64()) {
+            prop_assert_eq!(apply_function(&Func::ACos, vec![Value::Float(unit)]), Ok(Value::Float(unit.acos())));
+            prop_assert_eq!(apply_function(&Func::ASin, vec![Value::Float(unit)]), Ok(Value::Float(unit.asin())));
+            prop_assert_eq!(apply_function(&Func::Ln, vec![Value::Float(positive)]), Ok(Value::Float(positive.ln())));
+            prop_assert_eq!(apply_function(&Func::Log, vec![Value::Float(positive)]), Ok(Value::Float(positive.log10())));
+        }
     }
 
     #[rstest]

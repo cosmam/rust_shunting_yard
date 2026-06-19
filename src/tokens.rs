@@ -303,50 +303,216 @@ pub enum Token<'source> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use logos::Logos;
+    use proptest::prelude::*;
 
-    #[test]
-    fn test_parse_float_error_transformation() {
-        let error_instance = "not_a_float".parse::<f64>().unwrap_err();
-        let custom_err = LexicalError::from(error_instance);
-
-        assert_eq!(
-            custom_err,
-            LexicalError::InvalidFloat("invalid float literal".to_string())
-        );
+    fn single_token(input: &str) -> Option<Result<Token<'_>, LexicalError>> {
+        let mut lexer = Token::lexer(input);
+        let token = lexer.next();
+        assert_eq!(lexer.next(), None);
+        token
     }
 
-    #[test]
-    fn test_display_lexical_error_token() {
-        let lexical_error = LexicalError::InvalidToken;
-
-        assert_eq!(format!("{}", lexical_error), "Invalid Token");
+    fn function_tokens() -> impl Strategy<Value = (&'static str, Token<'static>)> {
+        prop_oneof![
+            Just(("cos", Token::Cos)),
+            Just(("sin", Token::Sin)),
+            Just(("tan", Token::Tan)),
+            Just(("min", Token::Minimum)),
+            Just(("max", Token::Maximum)),
+            Just(("pow", Token::Power)),
+            Just(("mod", Token::Mod)),
+            Just(("rem", Token::Remainder)),
+            Just(("round", Token::Round)),
+            Just(("acos", Token::ACos)),
+            Just(("asin", Token::ASin)),
+            Just(("atan", Token::ATan)),
+            Just(("abs", Token::AbsoluteValue)),
+            Just(("ln", Token::NaturalLog)),
+            Just(("log", Token::Log)),
+            Just(("exp", Token::Euler)),
+            Just(("floor", Token::Floor)),
+            Just(("ceil", Token::Ceiling)),
+            Just(("ceiling", Token::Ceiling)),
+        ]
     }
 
-    #[test]
-    fn test_display_lexical_error_integer() {
-        let lexical_error = LexicalError::InvalidInteger("Test".to_string());
-
-        assert_eq!(format!("{}", lexical_error), "Invalid Integer: Test");
+    fn operator_tokens() -> impl Strategy<Value = (&'static str, Token<'static>)> {
+        prop_oneof![
+            Just(("(", Token::LeftParen)),
+            Just((")", Token::RightParen)),
+            Just(("==", Token::Equals)),
+            Just(("!=", Token::NotEquals)),
+            Just(("/=", Token::NotEquals)),
+            Just(("<=", Token::LessThanEquals)),
+            Just((">=", Token::GreaterThanEquals)),
+            Just(("~=", Token::ApproximatelyEquals)),
+            Just(("<", Token::LessThan)),
+            Just((">", Token::GreaterThan)),
+            Just(("+", Token::Plus)),
+            Just(("-", Token::Minus)),
+            Just(("**", Token::Exponentiation)),
+            Just(("*", Token::Multiply)),
+            Just(("/", Token::Divide)),
+            Just(("%", Token::Modulo)),
+            Just(("&&", Token::LogicalAnd)),
+            Just(("||", Token::LogicalOr)),
+            Just(("<<", Token::BitshiftLeft)),
+            Just((">>", Token::BitshiftRight)),
+            Just(("°", Token::Degrees)),
+            Just(("!", Token::LogicalNot)),
+            Just(("&", Token::BitwiseAnd)),
+            Just(("^", Token::BitwiseXor)),
+            Just(("~", Token::BitwiseNot)),
+            Just(("|", Token::BitwiseOr)),
+            Just((",", Token::Comma)),
+        ]
     }
 
-    #[test]
-    fn test_display_lexical_error_bool() {
-        let lexical_error = LexicalError::InvalidBool("Test".to_string());
+    proptest! {
+        #[test]
+        fn prop_lexical_error_display_includes_variant_and_message(message in "\\PC{0,32}") {
+            prop_assert_eq!(
+                format!("{}", LexicalError::InvalidBool(message.clone())),
+                format!("Invalid Bool: {message}")
+            );
+            prop_assert_eq!(
+                format!("{}", LexicalError::InvalidInteger(message.clone())),
+                format!("Invalid Integer: {message}")
+            );
+            prop_assert_eq!(
+                format!("{}", LexicalError::InvalidFloat(message.clone())),
+                format!("Invalid Float: {message}")
+            );
+            prop_assert_eq!(
+                format!("{}", LexicalError::UnknownSymbol(message.clone())),
+                format!("Unknown Symbol: {message}")
+            );
+            prop_assert_eq!(format!("{}", LexicalError::InvalidToken), "Invalid Token");
+        }
 
-        assert_eq!(format!("{}", lexical_error), "Invalid Bool: Test");
-    }
+        #[test]
+        fn prop_parse_errors_convert_to_lexical_errors(input in "[A-Za-z_][A-Za-z0-9_]{0,16}") {
+            let bool_error = input.parse::<bool>().unwrap_err();
+            let int_error = input.parse::<i64>().unwrap_err();
+            let float_error = input.parse::<f64>().unwrap_err();
 
-    #[test]
-    fn test_display_lexical_error_float() {
-        let lexical_error = LexicalError::InvalidFloat("Test".to_string());
+            prop_assert_eq!(
+                LexicalError::from(bool_error),
+                LexicalError::InvalidBool("provided string was not `true` or `false`".to_string())
+            );
+            prop_assert_eq!(
+                LexicalError::from(int_error),
+                LexicalError::InvalidInteger("invalid digit found in string".to_string())
+            );
+            prop_assert_eq!(
+                LexicalError::from(float_error),
+                LexicalError::InvalidFloat("invalid float literal".to_string())
+            );
+        }
 
-        assert_eq!(format!("{}", lexical_error), "Invalid Float: Test");
-    }
+        #[test]
+        fn prop_decimal_integer_lexes_as_integer(value in 0i64..=i64::MAX) {
+            let input = value.to_string();
 
-    #[test]
-    fn test_display_lexical_error_symbol() {
-        let lexical_error = LexicalError::UnknownSymbol("Test".to_string());
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Integer(value))));
+        }
 
-        assert_eq!(format!("{}", lexical_error), "Unknown Symbol: Test");
+        #[test]
+        fn prop_hexadecimal_lexes_as_hexadecimal(value in 0i64..=i64::MAX) {
+            let input = format!("0x{value:x}");
+
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Hexadecimal(value))));
+        }
+
+        #[test]
+        fn prop_plain_float_lexes_as_float(
+            whole in 0u64..1_000_000,
+            fraction in 0u32..1_000_000,
+        ) {
+            let input = format!("{whole}.{fraction:06}");
+            let expected = input.parse::<f64>().unwrap();
+
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Float(expected))));
+        }
+
+        #[test]
+        fn prop_exponent_float_lexes_as_float(
+            mantissa in 1u64..1_000_000,
+            exponent in -20i32..20,
+        ) {
+            let input = format!("{mantissa}e{exponent}");
+            let expected = input.parse::<f64>().unwrap();
+
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Float(expected))));
+        }
+
+        #[test]
+        fn prop_lowercase_bool_lexes_as_bool(value in any::<bool>()) {
+            let input = value.to_string();
+
+            prop_assert_eq!(single_token(&input), Some(Ok(Token::Bool(value))));
+        }
+
+        #[test]
+        fn prop_uppercase_bool_reports_invalid_bool(value in any::<bool>()) {
+            let input = value.to_string().to_uppercase();
+
+            prop_assert!(matches!(
+                single_token(&input),
+                Some(Err(LexicalError::InvalidBool(_)))
+            ));
+        }
+
+        #[test]
+        fn prop_variable_names_lex_as_variables(name in "[a-zA-Z_][a-zA-Z0-9_\\.]{0,12}(\\[[0-9]{1,4}\\])?") {
+            prop_assert_eq!(single_token(&name), Some(Ok(Token::Variable(name.as_str()))));
+        }
+
+        #[test]
+        fn prop_function_names_lex_as_function_tokens((input, expected) in function_tokens()) {
+            prop_assert_eq!(single_token(input), Some(Ok(expected)));
+        }
+
+        #[test]
+        fn prop_operator_spellings_lex_as_operator_tokens((input, expected) in operator_tokens()) {
+            prop_assert_eq!(single_token(input), Some(Ok(expected)));
+        }
+
+        #[test]
+        fn prop_unknown_symbols_report_unknown_symbol(input in "[@#$?]{1}") {
+            prop_assert_eq!(
+                single_token(&input),
+                Some(Err(LexicalError::UnknownSymbol(input.clone())))
+            );
+        }
+
+        #[test]
+        fn prop_large_decimal_reports_invalid_integer(
+            value in 18_446_744_073_709_551_616u128..100_000_000_000_000_000_000u128,
+        ) {
+            let input = value.to_string();
+
+            prop_assert!(matches!(
+                single_token(&input),
+                Some(Err(LexicalError::InvalidInteger(_)))
+            ));
+        }
+
+        #[test]
+        fn prop_non_finite_float_literals_report_invalid_float(input in prop_oneof![
+            Just("NaN".to_string()),
+            Just("nan".to_string()),
+            Just("NAN".to_string()),
+            Just("NaN32".to_string()),
+            Just("NaN64".to_string()),
+            Just("1e309".to_string()),
+            Just("12.1e-320".to_string()),
+        ]) {
+            prop_assert!(matches!(
+                single_token(&input),
+                Some(Err(LexicalError::InvalidFloat(_)))
+            ));
+        }
     }
 }
