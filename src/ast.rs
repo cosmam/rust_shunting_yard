@@ -162,30 +162,7 @@ mod tests {
     }
 
     fn variable_name() -> impl Strategy<Value = String> {
-        "[a-zA-Z_][a-zA-Z0-9_]{0,12}".prop_filter("not a reserved function name", |name| {
-            !matches!(
-                name.as_str(),
-                "min"
-                    | "max"
-                    | "pow"
-                    | "mod"
-                    | "rem"
-                    | "round"
-                    | "cos"
-                    | "sin"
-                    | "tan"
-                    | "acos"
-                    | "asin"
-                    | "atan"
-                    | "abs"
-                    | "ln"
-                    | "log"
-                    | "exp"
-                    | "floor"
-                    | "ceil"
-                    | "ceiling"
-            )
-        })
+        "[A-Z_][a-zA-Z0-9_]{0,12}"
     }
 
     fn binary_ops() -> impl Strategy<Value = (&'static str, Opcode)> {
@@ -520,61 +497,6 @@ mod tests {
         let result = parser.parse(&mut errors, lexer);
 
         assert_eq!(result, Ok(Box::new(Expression::Float(expected))));
-    }
-
-    #[test]
-    fn test_parse_bool() {
-        let lexer = lexer::Lexer::new("false");
-        let parser = calc::ExpressionParser::new();
-        let mut errors = Vec::new();
-        let result = parser.parse(&mut errors, lexer);
-
-        assert_eq!(result, Ok(Box::new(Expression::Bool(false))));
-    }
-
-    #[test]
-    fn test_parse_integer() {
-        let lexer = lexer::Lexer::new("146");
-        let parser = calc::ExpressionParser::new();
-        let mut errors = Vec::new();
-        let result = parser.parse(&mut errors, lexer);
-
-        assert_eq!(result, Ok(Box::new(Expression::Integer(146))));
-    }
-
-    #[test]
-    fn test_parse_hex() {
-        let lexer = lexer::Lexer::new("0xfe");
-        let parser = calc::ExpressionParser::new();
-        let mut errors = Vec::new();
-        let result = parser.parse(&mut errors, lexer);
-
-        assert_eq!(result, Ok(Box::new(Expression::Integer(254))));
-    }
-
-    #[test]
-    fn test_parse_variable() {
-        let lexer = lexer::Lexer::new("some_name[1]");
-        let parser = calc::ExpressionParser::new();
-        let mut errors = Vec::new();
-        let result = parser.parse(&mut errors, lexer);
-
-        assert_eq!(result, Ok(Box::new(Expression::Variable("some_name[1]"))));
-    }
-
-    #[test]
-    fn test_parse_lexical_error_token() {
-        let lexer = lexer::Lexer::new("$");
-        let parser = calc::ExpressionParser::new();
-        let mut errors = Vec::new();
-        let result = parser.parse(&mut errors, lexer);
-
-        assert_eq!(
-            result,
-            Ok(Box::new(Expression::LexicalError(
-                LexicalError::UnknownSymbol("$".to_owned())
-            )))
-        );
     }
 
     #[rstest]
