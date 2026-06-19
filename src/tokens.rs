@@ -306,52 +306,6 @@ mod tests {
     use logos::Logos;
     use proptest::prelude::*;
 
-    #[test]
-    fn test_parse_float_error_transformation() {
-        let error_instance = "not_a_float".parse::<f64>().unwrap_err();
-        let custom_err = LexicalError::from(error_instance);
-
-        assert_eq!(
-            custom_err,
-            LexicalError::InvalidFloat("invalid float literal".to_string())
-        );
-    }
-
-    #[test]
-    fn test_display_lexical_error_token() {
-        let lexical_error = LexicalError::InvalidToken;
-
-        assert_eq!(format!("{}", lexical_error), "Invalid Token");
-    }
-
-    #[test]
-    fn test_display_lexical_error_integer() {
-        let lexical_error = LexicalError::InvalidInteger("Test".to_string());
-
-        assert_eq!(format!("{}", lexical_error), "Invalid Integer: Test");
-    }
-
-    #[test]
-    fn test_display_lexical_error_bool() {
-        let lexical_error = LexicalError::InvalidBool("Test".to_string());
-
-        assert_eq!(format!("{}", lexical_error), "Invalid Bool: Test");
-    }
-
-    #[test]
-    fn test_display_lexical_error_float() {
-        let lexical_error = LexicalError::InvalidFloat("Test".to_string());
-
-        assert_eq!(format!("{}", lexical_error), "Invalid Float: Test");
-    }
-
-    #[test]
-    fn test_display_lexical_error_symbol() {
-        let lexical_error = LexicalError::UnknownSymbol("Test".to_string());
-
-        assert_eq!(format!("{}", lexical_error), "Unknown Symbol: Test");
-    }
-
     fn single_token(input: &str) -> Option<Result<Token<'_>, LexicalError>> {
         let mut lexer = Token::lexer(input);
         let token = lexer.next();
@@ -416,6 +370,47 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn prop_lexical_error_display_includes_variant_and_message(message in "\\PC{0,32}") {
+            prop_assert_eq!(
+                format!("{}", LexicalError::InvalidBool(message.clone())),
+                format!("Invalid Bool: {message}")
+            );
+            prop_assert_eq!(
+                format!("{}", LexicalError::InvalidInteger(message.clone())),
+                format!("Invalid Integer: {message}")
+            );
+            prop_assert_eq!(
+                format!("{}", LexicalError::InvalidFloat(message.clone())),
+                format!("Invalid Float: {message}")
+            );
+            prop_assert_eq!(
+                format!("{}", LexicalError::UnknownSymbol(message.clone())),
+                format!("Unknown Symbol: {message}")
+            );
+            prop_assert_eq!(format!("{}", LexicalError::InvalidToken), "Invalid Token");
+        }
+
+        #[test]
+        fn prop_parse_errors_convert_to_lexical_errors(input in "[A-Za-z_][A-Za-z0-9_]{0,16}") {
+            let bool_error = input.parse::<bool>().unwrap_err();
+            let int_error = input.parse::<i64>().unwrap_err();
+            let float_error = input.parse::<f64>().unwrap_err();
+
+            prop_assert_eq!(
+                LexicalError::from(bool_error),
+                LexicalError::InvalidBool("provided string was not `true` or `false`".to_string())
+            );
+            prop_assert_eq!(
+                LexicalError::from(int_error),
+                LexicalError::InvalidInteger("invalid digit found in string".to_string())
+            );
+            prop_assert_eq!(
+                LexicalError::from(float_error),
+                LexicalError::InvalidFloat("invalid float literal".to_string())
+            );
+        }
+
         #[test]
         fn prop_decimal_integer_lexes_as_integer(value in 0i64..=i64::MAX) {
             let input = value.to_string();
