@@ -144,9 +144,350 @@ pub enum Func {
 mod tests {
     use super::*;
     use crate::lexer;
+    use crate::tokens::Token;
+    use lalrpop_util::ParseError;
     use lalrpop_util::lalrpop_mod;
+    use proptest::prelude::*;
     use rstest::*;
     lalrpop_mod!(pub calc); // Load the generated module
+
+    fn parse_expression(
+        input: &str,
+    ) -> Result<Box<Expression<'_>>, ParseError<usize, Token<'_>, LexicalError>> {
+        let lexer = lexer::Lexer::new(input);
+        let parser = calc::ExpressionParser::new();
+        let mut errors = Vec::new();
+
+        parser.parse(&mut errors, lexer)
+    }
+
+    fn variable_name() -> impl Strategy<Value = String> {
+        "[a-zA-Z_][a-zA-Z0-9_]{0,12}".prop_filter("not a reserved function name", |name| {
+            !matches!(
+                name.as_str(),
+                "min"
+                    | "max"
+                    | "pow"
+                    | "mod"
+                    | "rem"
+                    | "round"
+                    | "cos"
+                    | "sin"
+                    | "tan"
+                    | "acos"
+                    | "asin"
+                    | "atan"
+                    | "abs"
+                    | "ln"
+                    | "log"
+                    | "exp"
+                    | "floor"
+                    | "ceil"
+                    | "ceiling"
+            )
+        })
+    }
+
+    fn binary_ops() -> impl Strategy<Value = (&'static str, Opcode)> {
+        prop_oneof![
+            Just(("==", Opcode::Equals)),
+            Just(("!=", Opcode::NotEquals)),
+            Just(("/=", Opcode::NotEquals)),
+            Just(("<=", Opcode::LessThanEquals)),
+            Just((">=", Opcode::GreaterThanEquals)),
+            Just(("~=", Opcode::ApproximatelyEquals)),
+            Just(("<", Opcode::LessThan)),
+            Just((">", Opcode::GreaterThan)),
+            Just(("**", Opcode::Power)),
+            Just(("*", Opcode::Multiply)),
+            Just(("/", Opcode::Divide)),
+            Just(("+", Opcode::Plus)),
+            Just(("-", Opcode::Minus)),
+            Just(("%", Opcode::Modulo)),
+            Just(("<<", Opcode::BitshiftLeft)),
+            Just((">>", Opcode::BitshiftRight)),
+            Just(("&&", Opcode::LogicalAnd)),
+            Just(("||", Opcode::LogicalOr)),
+            Just(("&", Opcode::BitwiseAnd)),
+            Just(("|", Opcode::BitwiseOr)),
+            Just(("^", Opcode::BitwiseXor)),
+        ]
+    }
+
+    fn left_associative_binary_ops() -> impl Strategy<Value = (&'static str, Opcode)> {
+        prop_oneof![
+            Just(("==", Opcode::Equals)),
+            Just(("!=", Opcode::NotEquals)),
+            Just(("/=", Opcode::NotEquals)),
+            Just(("<=", Opcode::LessThanEquals)),
+            Just((">=", Opcode::GreaterThanEquals)),
+            Just(("~=", Opcode::ApproximatelyEquals)),
+            Just(("<", Opcode::LessThan)),
+            Just((">", Opcode::GreaterThan)),
+            Just(("*", Opcode::Multiply)),
+            Just(("/", Opcode::Divide)),
+            Just(("+", Opcode::Plus)),
+            Just(("-", Opcode::Minus)),
+            Just(("%", Opcode::Modulo)),
+            Just(("<<", Opcode::BitshiftLeft)),
+            Just((">>", Opcode::BitshiftRight)),
+            Just(("&&", Opcode::LogicalAnd)),
+            Just(("||", Opcode::LogicalOr)),
+            Just(("&", Opcode::BitwiseAnd)),
+            Just(("|", Opcode::BitwiseOr)),
+            Just(("^", Opcode::BitwiseXor)),
+        ]
+    }
+
+    fn additive_ops() -> impl Strategy<Value = (&'static str, Opcode)> {
+        prop_oneof![Just(("+", Opcode::Plus)), Just(("-", Opcode::Minus)),]
+    }
+
+    fn multiplicative_ops() -> impl Strategy<Value = (&'static str, Opcode)> {
+        prop_oneof![
+            Just(("*", Opcode::Multiply)),
+            Just(("/", Opcode::Divide)),
+            Just(("%", Opcode::Modulo)),
+        ]
+    }
+
+    fn prefix_unary_ops() -> impl Strategy<Value = (&'static str, Opcode)> {
+        prop_oneof![
+            Just(("!", Opcode::LogicalNot)),
+            Just(("+", Opcode::Plus)),
+            Just(("-", Opcode::Minus)),
+            Just(("~", Opcode::BitwiseNot)),
+        ]
+    }
+
+    fn functions() -> impl Strategy<Value = (&'static str, Func)> {
+        prop_oneof![
+            Just(("min", Func::Min)),
+            Just(("max", Func::Max)),
+            Just(("pow", Func::Power)),
+            Just(("mod", Func::Modulo)),
+            Just(("rem", Func::Remainder)),
+            Just(("round", Func::Round)),
+            Just(("cos", Func::Cos)),
+            Just(("sin", Func::Sin)),
+            Just(("tan", Func::Tan)),
+            Just(("acos", Func::ACos)),
+            Just(("asin", Func::ASin)),
+            Just(("atan", Func::ATan)),
+            Just(("abs", Func::Abs)),
+            Just(("ln", Func::Ln)),
+            Just(("log", Func::Log)),
+            Just(("exp", Func::Exp)),
+            Just(("floor", Func::Floor)),
+            Just(("ceil", Func::Ceiling)),
+            Just(("ceiling", Func::Ceiling)),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn prop_parse_integer_literal(value in 0i64..=i64::MAX) {
+            let input = value.to_string();
+
+            prop_assert_eq!(parse_expression(&input), Ok(Box::new(Expression::Integer(value))));
+        }
+
+        #[test]
+        fn prop_parse_hex_literal(value in 0i64..=i64::MAX) {
+            let input = format!("0x{value:x}");
+
+            prop_assert_eq!(parse_expression(&input), Ok(Box::new(Expression::Integer(value))));
+        }
+
+        #[test]
+        fn prop_parse_float_literal(whole in 0u64..1_000_000, fraction in 0u32..1_000_000) {
+            let input = format!("{whole}.{fraction:06}");
+            let expected = input.parse::<f64>().unwrap();
+
+            prop_assert_eq!(parse_expression(&input), Ok(Box::new(Expression::Float(expected))));
+        }
+
+        #[test]
+        fn prop_parse_bool_literal(value in any::<bool>()) {
+            let input = value.to_string();
+
+            prop_assert_eq!(parse_expression(&input), Ok(Box::new(Expression::Bool(value))));
+        }
+
+        #[test]
+        fn prop_parse_variable_reference(name in variable_name()) {
+            prop_assert_eq!(
+                parse_expression(&name),
+                Ok(Box::new(Expression::Variable(name.as_str())))
+            );
+        }
+
+        #[test]
+        fn prop_parse_parenthesized_integer(value in 0i64..1_000_000) {
+            let input = format!("({value})");
+
+            prop_assert_eq!(parse_expression(&input), Ok(Box::new(Expression::Integer(value))));
+        }
+
+        #[test]
+        fn prop_parse_binary_operator((op, opcode) in binary_ops()) {
+            let input = format!("1 {op} 2");
+
+            prop_assert_eq!(
+                parse_expression(&input),
+                Ok(Box::new(Expression::BinaryOperation {
+                    lhs: Box::new(Expression::Integer(1)),
+                    operator: opcode,
+                    rhs: Box::new(Expression::Integer(2)),
+                }))
+            );
+        }
+
+        #[test]
+        fn prop_parse_prefix_unary_operator((op, opcode) in prefix_unary_ops()) {
+            let input = format!("{op}2");
+
+            prop_assert_eq!(
+                parse_expression(&input),
+                Ok(Box::new(Expression::UnaryOperation {
+                    operator: opcode,
+                    value: Box::new(Expression::Integer(2)),
+                }))
+            );
+        }
+
+        #[test]
+        fn prop_parse_postfix_degrees(value in 0i64..1_000_000) {
+            let input = format!("{value}°");
+
+            prop_assert_eq!(
+                parse_expression(&input),
+                Ok(Box::new(Expression::UnaryOperation {
+                    operator: Opcode::Degrees,
+                    value: Box::new(Expression::Integer(value)),
+                }))
+            );
+        }
+
+        #[test]
+        fn prop_parse_single_argument_function((name, func) in functions(), value in 0i64..1_000_000) {
+            let input = format!("{name}({value})");
+
+            prop_assert_eq!(
+                parse_expression(&input),
+                Ok(Box::new(Expression::Function {
+                    func,
+                    arguments: vec![Expression::Integer(value)],
+                }))
+            );
+        }
+
+        #[test]
+        fn prop_parse_multi_argument_function(
+            (name, func) in functions(),
+            a in 0i64..1_000,
+            b in 0i64..1_000,
+            c in 0i64..1_000,
+        ) {
+            let input = format!("{name}({a}, {b}, {c})");
+
+            prop_assert_eq!(
+                parse_expression(&input),
+                Ok(Box::new(Expression::Function {
+                    func,
+                    arguments: vec![
+                        Expression::Integer(a),
+                        Expression::Integer(b),
+                        Expression::Integer(c),
+                    ],
+                }))
+            );
+        }
+
+        #[test]
+        fn prop_left_associative_binary_operator((op, opcode) in left_associative_binary_ops()) {
+            let input = format!("1 {op} 2 {op} 3");
+
+            prop_assert_eq!(
+                parse_expression(&input),
+                Ok(Box::new(Expression::BinaryOperation {
+                    lhs: Box::new(Expression::BinaryOperation {
+                        lhs: Box::new(Expression::Integer(1)),
+                        operator: opcode.clone(),
+                        rhs: Box::new(Expression::Integer(2)),
+                    }),
+                    operator: opcode,
+                    rhs: Box::new(Expression::Integer(3)),
+                }))
+            );
+        }
+
+        #[test]
+        fn prop_power_is_right_associative(_unit in Just(())) {
+            prop_assert_eq!(
+                parse_expression("1 ** 2 ** 3"),
+                Ok(Box::new(Expression::BinaryOperation {
+                    lhs: Box::new(Expression::Integer(1)),
+                    operator: Opcode::Power,
+                    rhs: Box::new(Expression::BinaryOperation {
+                        lhs: Box::new(Expression::Integer(2)),
+                        operator: Opcode::Power,
+                        rhs: Box::new(Expression::Integer(3)),
+                    }),
+                }))
+            );
+        }
+
+        #[test]
+        fn prop_multiplicative_precedence_on_rhs(
+            (add_op, add_opcode) in additive_ops(),
+            (mul_op, mul_opcode) in multiplicative_ops(),
+        ) {
+            let input = format!("1 {add_op} 2 {mul_op} 3");
+
+            prop_assert_eq!(
+                parse_expression(&input),
+                Ok(Box::new(Expression::BinaryOperation {
+                    lhs: Box::new(Expression::Integer(1)),
+                    operator: add_opcode,
+                    rhs: Box::new(Expression::BinaryOperation {
+                        lhs: Box::new(Expression::Integer(2)),
+                        operator: mul_opcode,
+                        rhs: Box::new(Expression::Integer(3)),
+                    }),
+                }))
+            );
+        }
+
+        #[test]
+        fn prop_multiplicative_precedence_on_lhs(
+            (mul_op, mul_opcode) in multiplicative_ops(),
+            (add_op, add_opcode) in additive_ops(),
+        ) {
+            let input = format!("1 {mul_op} 2 {add_op} 3");
+
+            prop_assert_eq!(
+                parse_expression(&input),
+                Ok(Box::new(Expression::BinaryOperation {
+                    lhs: Box::new(Expression::BinaryOperation {
+                        lhs: Box::new(Expression::Integer(1)),
+                        operator: mul_opcode,
+                        rhs: Box::new(Expression::Integer(2)),
+                    }),
+                    operator: add_opcode,
+                    rhs: Box::new(Expression::Integer(3)),
+                }))
+            );
+        }
+
+        #[test]
+        fn prop_lexical_error_token_becomes_expression(input in "[@#$?]{1}") {
+            prop_assert!(matches!(
+                parse_expression(&input),
+                Ok(expr) if matches!(*expr, Expression::LexicalError(_))
+            ));
+        }
+    }
 
     /************ Single-symbol parsing tests *************/
 
