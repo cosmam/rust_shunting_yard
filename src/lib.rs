@@ -8,6 +8,8 @@ mod eval;
 mod lexer;
 mod tokens;
 
+pub use tokens::LexicalError;
+
 lalrpop_mod!(
     #[allow(clippy::all)]
     #[allow(clippy::pedantic)]
@@ -26,24 +28,186 @@ pub enum Value {
     Float(f64),
 }
 
+/// Integer arithmetic operation associated with a checked arithmetic failure.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArithmeticOp {
+    /// Unary negation.
+    Negate,
+    /// Addition.
+    Add,
+    /// Subtraction.
+    Subtract,
+    /// Multiplication.
+    Multiply,
+    /// Division.
+    Divide,
+    /// Modulo/remainder.
+    Modulo,
+    /// Euclidean remainder.
+    Remainder,
+    /// Exponentiation.
+    Power,
+    /// Left shift.
+    ShiftLeft,
+    /// Right shift.
+    ShiftRight,
+    /// Float-to-integer conversion.
+    FloatToInteger,
+    /// Round-to-precision operation.
+    Round,
+    /// Floor-to-precision operation.
+    Floor,
+    /// Ceiling-to-precision operation.
+    Ceiling,
+}
+
+/// Resource limit exceeded before or during evaluation.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ResourceLimitError {
+    /// Input is longer than the configured maximum.
+    #[error("input too large: {actual} bytes exceeds {max} bytes")]
+    InputTooLarge {
+        /// Actual input length in bytes.
+        actual: usize,
+        /// Maximum allowed input length in bytes.
+        max: usize,
+    },
+    /// Token count exceeds the configured maximum.
+    #[error("too many tokens: {actual} exceeds {max}")]
+    TooManyTokens {
+        /// Actual token count.
+        actual: usize,
+        /// Maximum allowed token count.
+        max: usize,
+    },
+    /// AST node count exceeds the configured maximum.
+    #[error("AST too large: {actual} nodes exceeds {max}")]
+    AstTooLarge {
+        /// Actual AST node count when the limit was exceeded.
+        actual: usize,
+        /// Maximum allowed AST node count.
+        max: usize,
+    },
+    /// AST nesting depth exceeds the configured maximum.
+    #[error("expression too deep: depth {actual} exceeds {max}")]
+    ExpressionTooDeep {
+        /// Actual depth when the limit was exceeded.
+        actual: usize,
+        /// Maximum allowed depth.
+        max: usize,
+    },
+    /// A function call has too many arguments.
+    #[error("too many function arguments: {actual} exceeds {max}")]
+    TooManyFunctionArguments {
+        /// Actual argument count.
+        actual: usize,
+        /// Maximum allowed argument count.
+        max: usize,
+    },
+    /// Parser recovery count exceeds the configured maximum.
+    #[error("too many parser recoveries: {actual} exceeds {max}")]
+    TooManyParserRecoveries {
+        /// Actual parser recovery count.
+        actual: usize,
+        /// Maximum allowed parser recovery count.
+        max: usize,
+    },
+}
+
+/// Options controlling resource limits for expression evaluation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvalOptions {
+    /// Maximum input size in bytes.
+    pub max_input_bytes: usize,
+    /// Maximum number of lexer tokens.
+    pub max_tokens: usize,
+    /// Maximum number of AST nodes.
+    pub max_ast_nodes: usize,
+    /// Maximum AST nesting depth.
+    pub max_depth: usize,
+    /// Maximum arguments accepted for one function call.
+    pub max_function_args: usize,
+    /// Maximum parser recoveries accepted after parsing.
+    pub max_parser_recoveries: usize,
+}
+
+impl Default for EvalOptions {
+    fn default() -> Self {
+        Self {
+            max_input_bytes: 16 * 1024,
+            max_tokens: 4096,
+            max_ast_nodes: 4096,
+            max_depth: 256,
+            max_function_args: 256,
+            max_parser_recoveries: 64,
+        }
+    }
+}
+
 /// Error returned when expression evaluation fails.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum EvalError {
     /// An operator or function was used with an unsupported number of operands.
-    #[error("invalid operand count")]
-    InvalidArity,
+    #[error("invalid operand count: expected {expected}, got {actual}")]
+    InvalidArity {
+        /// Expected operand count or count description.
+        expected: &'static str,
+        /// Actual operand count.
+        actual: usize,
+    },
     /// The expression tree contains an error node or lexical error node.
     #[error("invalid expression")]
     InvalidExpression,
     /// An invalid type was passed to a calculation
-    #[error("invalid type: {0}")]
-    InvalidType(String),
-    /// There is some math error, such as division by zero
-    #[error("math error: {0}")]
-    MathError(String),
+    #[error("invalid type: expected {expected}, got {actual}")]
+    InvalidType {
+        /// Expected value type.
+        expected: &'static str,
+        /// Actual value type.
+        actual: &'static str,
+    },
+    /// Division, modulo, or remainder by zero.
+    #[error("division by zero")]
+    DivisionByZero,
+    /// Checked integer arithmetic overflowed.
+    #[error("integer overflow during {op:?}")]
+    IntegerOverflow {
+        /// Operation that overflowed.
+        op: ArithmeticOp,
+    },
+    /// A shift count was negative or too large for `i64`.
+    #[error("invalid shift count: {count}")]
+    InvalidShiftCount {
+        /// Rejected shift count.
+        count: i64,
+    },
+    /// Integer exponent could not be converted to a supported power.
+    #[error("invalid exponent: {exponent}")]
+    InvalidExponent {
+        /// Rejected exponent.
+        exponent: i64,
+    },
+    /// A rounding precision was zero, negative, or non-finite.
+    #[error("invalid precision")]
+    InvalidPrecision,
+    /// A floating-point operation produced NaN or infinity.
+    #[error("non-finite float result")]
+    NonFiniteFloat,
+    /// Evaluation stopped because a resource limit was exceeded.
+    #[error("{0}")]
+    ResourceLimit(ResourceLimitError),
+    /// The lexer found malformed input.
+    #[error("lexical error: {0}")]
+    LexicalError(LexicalError),
     /// The parser ran into an error it couldn't recover from
     #[error("parser error")]
     ParserError,
+    /// The parser recovered from malformed input.
+    #[error("parser recovered from {count} errors")]
+    ParserRecovery {
+        /// Number of recoveries reported by the parser.
+        count: usize,
+    },
     /// An opcode was found that was already supposed to be filtered out
     #[error("unexpected opcode")]
     UnexpectedOpcode,
@@ -69,10 +233,31 @@ pub enum EvalError {
 /// Evaluation errors from the parsed expression, such as unknown variables or
 /// invalid operations, are returned unchanged.
 pub fn evaluate(text: &str, variables: &HashMap<String, Value>) -> Result<Value, EvalError> {
-    let lexer = lexer::Lexer::new(text);
-    evaluate_tokens(lexer, variables)
+    evaluate_with_options(text, variables, &EvalOptions::default())
 }
 
+/// Parse and evaluate an expression string with explicit resource limits.
+///
+/// See [`evaluate`] for the default-limited entrypoint.
+pub fn evaluate_with_options(
+    text: &str,
+    variables: &HashMap<String, Value>,
+    options: &EvalOptions,
+) -> Result<Value, EvalError> {
+    if text.len() > options.max_input_bytes {
+        return Err(EvalError::ResourceLimit(
+            ResourceLimitError::InputTooLarge {
+                actual: text.len(),
+                max: options.max_input_bytes,
+            },
+        ));
+    }
+
+    let lexer = lexer::Lexer::new(text);
+    evaluate_tokens_with_options(lexer, variables, options)
+}
+
+#[cfg(test)]
 fn evaluate_tokens<'input, Tokens>(
     tokens: Tokens,
     variables: &HashMap<String, Value>,
@@ -80,15 +265,125 @@ fn evaluate_tokens<'input, Tokens>(
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
 {
+    evaluate_tokens_with_options(tokens, variables, &EvalOptions::default())
+}
+
+fn evaluate_tokens_with_options<'input, Tokens>(
+    tokens: Tokens,
+    variables: &HashMap<String, Value>,
+    options: &EvalOptions,
+) -> Result<Value, EvalError>
+where
+    Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
+{
     let parser = calc::ExpressionParser::new();
+    let mut checked_tokens = Vec::new();
+
+    for token in tokens {
+        if checked_tokens.len() >= options.max_tokens {
+            return Err(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyTokens {
+                    actual: checked_tokens.len() + 1,
+                    max: options.max_tokens,
+                },
+            ));
+        }
+
+        match token {
+            Ok((_, tokens::Token::Error(error), _)) | Err(error) => {
+                return Err(EvalError::LexicalError(error));
+            }
+            Ok(token) => checked_tokens.push(Ok(token)),
+        }
+    }
 
     let mut errors = Vec::new();
-    let result = parser.parse(&mut errors, tokens);
+    let result = parser.parse(&mut errors, checked_tokens);
 
     match result {
-        Ok(ast) => eval::eval(&ast, variables),
+        Ok(ast) => {
+            if !errors.is_empty() {
+                if errors.len() > options.max_parser_recoveries {
+                    return Err(EvalError::ResourceLimit(
+                        ResourceLimitError::TooManyParserRecoveries {
+                            actual: errors.len(),
+                            max: options.max_parser_recoveries,
+                        },
+                    ));
+                }
+
+                return Err(EvalError::ParserRecovery {
+                    count: errors.len(),
+                });
+            }
+
+            validate_ast_limits(&ast, options)?;
+            eval::eval(&ast, variables)
+        }
         Err(_) => Err(EvalError::ParserError),
     }
+}
+
+fn validate_ast_limits(expr: &ast::Expression<'_>, options: &EvalOptions) -> Result<(), EvalError> {
+    fn walk(
+        expr: &ast::Expression<'_>,
+        depth: usize,
+        nodes: &mut usize,
+        options: &EvalOptions,
+    ) -> Result<(), EvalError> {
+        *nodes += 1;
+
+        if *nodes > options.max_ast_nodes {
+            return Err(EvalError::ResourceLimit(ResourceLimitError::AstTooLarge {
+                actual: *nodes,
+                max: options.max_ast_nodes,
+            }));
+        }
+
+        if depth > options.max_depth {
+            return Err(EvalError::ResourceLimit(
+                ResourceLimitError::ExpressionTooDeep {
+                    actual: depth,
+                    max: options.max_depth,
+                },
+            ));
+        }
+
+        match expr {
+            ast::Expression::UnaryOperation { value, .. } => {
+                walk(value, depth + 1, nodes, options)?;
+            }
+            ast::Expression::BinaryOperation { lhs, rhs, .. } => {
+                walk(lhs, depth + 1, nodes, options)?;
+                walk(rhs, depth + 1, nodes, options)?;
+            }
+            ast::Expression::Function { arguments, .. } => {
+                if arguments.len() > options.max_function_args {
+                    return Err(EvalError::ResourceLimit(
+                        ResourceLimitError::TooManyFunctionArguments {
+                            actual: arguments.len(),
+                            max: options.max_function_args,
+                        },
+                    ));
+                }
+
+                for argument in arguments {
+                    walk(argument, depth + 1, nodes, options)?;
+                }
+            }
+            ast::Expression::Bool(_)
+            | ast::Expression::Integer(_)
+            | ast::Expression::Float(_)
+            | ast::Expression::Variable(_)
+            | ast::Expression::LexicalError(_)
+            | ast::Expression::Error => {}
+        }
+
+        Ok(())
+    }
+
+    let mut nodes = 0;
+    walk(expr, 0, &mut nodes, options)
 }
 
 #[cfg(test)]
@@ -193,7 +488,7 @@ mod tests {
 
         assert_eq!(
             evaluate_tokens(tokens, &variables),
-            Err(EvalError::ParserError)
+            Err(EvalError::LexicalError(tokens::LexicalError::InvalidToken))
         );
     }
 
@@ -213,7 +508,193 @@ mod tests {
         );
         assert_eq!(
             evaluate_tokens(invalid_tokens, &variables),
-            Err(EvalError::ParserError)
+            Err(EvalError::LexicalError(tokens::LexicalError::InvalidToken))
+        );
+    }
+
+    #[test]
+    fn evaluate_hostile_inputs_do_not_panic() {
+        let mut variables = HashMap::new();
+        variables.insert("low".to_owned(), Value::Integer(i64::MIN));
+        variables.insert("high".to_owned(), Value::Integer(i64::MAX));
+        variables.insert("inf".to_owned(), Value::Float(f64::INFINITY));
+        variables.insert("nan".to_owned(), Value::Float(f64::NAN));
+
+        let cases = [
+            "9223372036854775807 + 1",
+            "3037000500 * 3037000500",
+            "low / -1",
+            "low % -1",
+            "rem(low, -1)",
+            "1 / 0",
+            "1 % 0",
+            "mod(1, 0)",
+            "rem(1, 0)",
+            "1 << -1",
+            "1 << 64",
+            "1 >> -1",
+            "1 >> 64",
+            "pow(2, -1)",
+            "pow(2, 63)",
+            "ln(-1)",
+            "acos(2)",
+            "asin(2)",
+            "exp(10000)",
+            "1e308 * 1e308",
+            "inf + 1",
+            "nan + 1",
+            "$",
+            "1 +",
+        ];
+
+        for case in cases {
+            let result = std::panic::catch_unwind(|| {
+                let _ = evaluate(case, &variables);
+            });
+
+            assert!(result.is_ok(), "{case:?} panicked");
+        }
+    }
+
+    #[test]
+    fn evaluate_returns_typed_errors_for_hostile_inputs() {
+        let mut variables = HashMap::new();
+        variables.insert("low".to_owned(), Value::Integer(i64::MIN));
+        variables.insert("inf".to_owned(), Value::Float(f64::INFINITY));
+
+        assert_eq!(
+            evaluate("9223372036854775807 + 1", &variables),
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Add,
+            })
+        );
+        assert_eq!(
+            evaluate("3037000500 * 3037000500", &variables),
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Multiply,
+            })
+        );
+        assert_eq!(
+            evaluate("low / -1", &variables),
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Divide,
+            })
+        );
+        assert_eq!(
+            evaluate("1 / 0", &variables),
+            Err(EvalError::DivisionByZero)
+        );
+        assert_eq!(
+            evaluate("1 << -1", &variables),
+            Err(EvalError::InvalidShiftCount { count: -1 })
+        );
+        assert_eq!(
+            evaluate("pow(2, -1)", &variables),
+            Err(EvalError::InvalidExponent { exponent: -1 })
+        );
+        assert_eq!(
+            evaluate("ln(-1)", &variables),
+            Err(EvalError::NonFiniteFloat)
+        );
+        assert_eq!(
+            evaluate("inf + 1", &variables),
+            Err(EvalError::NonFiniteFloat)
+        );
+        assert_eq!(
+            evaluate("true + 1", &variables),
+            Err(EvalError::InvalidType {
+                expected: "integer or float",
+                actual: "bool",
+            })
+        );
+        assert_eq!(
+            evaluate("abs(1, 2)", &variables),
+            Err(EvalError::InvalidArity {
+                expected: "1",
+                actual: 2,
+            })
+        );
+        assert_eq!(
+            evaluate("$", &variables),
+            Err(EvalError::LexicalError(LexicalError::UnknownSymbol(
+                "$".to_owned()
+            )))
+        );
+        assert_eq!(
+            evaluate("1 +", &variables),
+            Err(EvalError::ParserRecovery { count: 1 })
+        );
+    }
+
+    #[test]
+    fn evaluate_with_options_enforces_resource_limits() {
+        let variables = HashMap::new();
+
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("1 + 2", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::InputTooLarge { actual: 5, max: 1 }
+            ))
+        );
+
+        let options = EvalOptions {
+            max_tokens: 1,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("1 + 2", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyTokens { actual: 2, max: 1 }
+            ))
+        );
+
+        let options = EvalOptions {
+            max_ast_nodes: 1,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("1 + 2", &variables, &options),
+            Err(EvalError::ResourceLimit(ResourceLimitError::AstTooLarge {
+                actual: 2,
+                max: 1,
+            }))
+        );
+
+        let options = EvalOptions {
+            max_depth: 1,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("!!true", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
+            ))
+        );
+
+        let options = EvalOptions {
+            max_function_args: 1,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("min(1, 2)", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyFunctionArguments { actual: 2, max: 1 }
+            ))
+        );
+
+        let options = EvalOptions {
+            max_parser_recoveries: 0,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("1 +", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyParserRecoveries { actual: 1, max: 0 }
+            ))
         );
     }
 
@@ -276,7 +757,7 @@ mod tests {
 
             prop_assert_eq!(
                 evaluate(&expression, &HashMap::new()),
-                Err(EvalError::MathError("Division by zero".to_string()))
+                Err(EvalError::DivisionByZero)
             );
         }
 
@@ -286,7 +767,7 @@ mod tests {
 
             prop_assert_eq!(
                 evaluate(&expression, &HashMap::new()),
-                Err(EvalError::MathError("Modulo by zero".to_string()))
+                Err(EvalError::DivisionByZero)
             );
         }
 
@@ -383,9 +864,9 @@ mod tests {
         fn prop_ill_typed_expression_returns_invalid_type(expr in ill_typed_expr()) {
             let text = expr.render();
 
-            prop_assert!(matches!(
+            assert!(matches!(
                 evaluate(&text, &HashMap::new()),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
         }
 

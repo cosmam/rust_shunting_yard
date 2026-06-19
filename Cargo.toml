@@ -16,3 +16,6 @@ lalrpop = "0.23.1"
 [dev-dependencies]
 proptest = "1"
 rstest = "0.26.1"
+
+[profile.release]
+overflow-checks = true
