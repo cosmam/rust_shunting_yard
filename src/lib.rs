@@ -343,7 +343,7 @@ where
 /// Parse and evaluate an expression string with explicit resource limits.
 ///
 /// This map-backed entrypoint preserves the original public API while routing
-/// variable lookup through [`VariableResolver`].
+/// variable lookup through the same resolver path as callback evaluation.
 ///
 /// See [`evaluate`] for the default-limited map-backed entrypoint.
 pub fn evaluate_with_options(
@@ -351,7 +351,16 @@ pub fn evaluate_with_options(
     variables: &HashMap<String, Value>,
     options: &EvalOptions,
 ) -> Result<Value, EvalError> {
-    evaluate_with_options_and_resolver(text, variables, options)
+    evaluate_with_options_and_resolver(
+        text,
+        |name: &str| {
+            variables
+                .get(name)
+                .cloned()
+                .ok_or_else(|| EvalError::UnknownVariable(name.to_owned()))
+        },
+        options,
+    )
 }
 
 /// Parse and evaluate an expression string with explicit resource limits and a
@@ -394,7 +403,16 @@ fn evaluate_tokens<'input, Tokens>(
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
 {
-    evaluate_tokens_with_options_and_resolver(tokens, variables, &EvalOptions::default())
+    evaluate_tokens_with_options_and_resolver(
+        tokens,
+        |name: &str| {
+            variables
+                .get(name)
+                .cloned()
+                .ok_or_else(|| EvalError::UnknownVariable(name.to_owned()))
+        },
+        &EvalOptions::default(),
+    )
 }
 
 fn evaluate_tokens_with_options_and_resolver<'input, Tokens, R>(
