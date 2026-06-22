@@ -28,6 +28,41 @@ pub enum Value {
     Float(f64),
 }
 
+/// Resolves variable names during expression evaluation.
+///
+/// Implement this trait when values should come from a source other than a
+/// [`HashMap`], such as a runtime context, cache, external environment, or
+/// future FFI adapter.
+///
+/// Returned values are validated by evaluation before use, so invalid
+/// floating-point values such as NaN, infinity, and subnormal floats are
+/// rejected.
+pub trait VariableResolver {
+    /// Resolve one variable name into a runtime value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EvalError`] when the variable is unknown or resolution fails.
+    fn resolve(&mut self, name: &str) -> Result<Value, EvalError>;
+}
+
+impl<F> VariableResolver for F
+where
+    F: FnMut(&str) -> Result<Value, EvalError>,
+{
+    fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+        self(name)
+    }
+}
+
+impl VariableResolver for &HashMap<String, Value> {
+    fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+        self.get(name)
+            .cloned()
+            .ok_or_else(|| EvalError::UnknownVariable(name.to_string()))
+    }
+}
+
 /// Integer arithmetic operation associated with a checked arithmetic failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArithmeticOp {
@@ -239,14 +274,68 @@ pub fn evaluate(text: &str, variables: &HashMap<String, Value>) -> Result<Value,
     evaluate_with_options(text, variables, &EvalOptions::default())
 }
 
+/// Parse and evaluate an expression string with a custom variable resolver.
+///
+/// This is the callback-backed counterpart to [`evaluate`]. It uses
+/// [`EvalOptions::default`] for resource limits.
+///
+/// # Examples
+///
+/// ```
+/// # use shunting_yard::{evaluate_with, EvalError, Value};
+/// let value = evaluate_with("x + 2", |name| match name {
+///     "x" => Ok(Value::Integer(40)),
+///     other => Err(EvalError::UnknownVariable(other.to_string())),
+/// });
+///
+/// assert_eq!(value, Ok(Value::Integer(42)));
+/// ```
+///
+/// # Errors
+///
+/// Returns [`EvalError::ParserError`] when `text` is not a valid expression.
+/// Evaluation errors from parsing, resource limits, expression evaluation, or
+/// the resolver are returned unchanged.
+pub fn evaluate_with<R>(text: &str, resolver: R) -> Result<Value, EvalError>
+where
+    R: FnMut(&str) -> Result<Value, EvalError>,
+{
+    evaluate_with_options_and_resolver(text, resolver, &EvalOptions::default())
+}
+
 /// Parse and evaluate an expression string with explicit resource limits.
 ///
-/// See [`evaluate`] for the default-limited entrypoint.
+/// This map-backed entrypoint preserves the original public API while routing
+/// variable lookup through [`VariableResolver`].
+///
+/// See [`evaluate`] for the default-limited map-backed entrypoint.
 pub fn evaluate_with_options(
     text: &str,
     variables: &HashMap<String, Value>,
     options: &EvalOptions,
 ) -> Result<Value, EvalError> {
+    evaluate_with_options_and_resolver(text, variables, options)
+}
+
+/// Parse and evaluate an expression string with explicit resource limits and a
+/// custom variable resolver.
+///
+/// This is the most general public entrypoint: callers provide both resource
+/// limits and the variable resolution strategy.
+///
+/// # Errors
+///
+/// Returns [`EvalError::ResourceLimit`] when `text`, token count, AST size,
+/// depth, function arity, or parser recovery count exceeds `options`.
+/// Parser, lexer, evaluation, and resolver errors are returned unchanged.
+pub fn evaluate_with_options_and_resolver<R>(
+    text: &str,
+    resolver: R,
+    options: &EvalOptions,
+) -> Result<Value, EvalError>
+where
+    R: VariableResolver,
+{
     if text.len() > options.max_input_bytes {
         return Err(EvalError::ResourceLimit(
             ResourceLimitError::InputTooLarge {
@@ -257,7 +346,7 @@ pub fn evaluate_with_options(
     }
 
     let lexer = lexer::Lexer::new(text);
-    evaluate_tokens_with_options(lexer, variables, options)
+    evaluate_tokens_with_options_and_resolver(lexer, resolver, options)
 }
 
 #[cfg(test)]
@@ -268,16 +357,17 @@ fn evaluate_tokens<'input, Tokens>(
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
 {
-    evaluate_tokens_with_options(tokens, variables, &EvalOptions::default())
+    evaluate_tokens_with_options_and_resolver(tokens, variables, &EvalOptions::default())
 }
 
-fn evaluate_tokens_with_options<'input, Tokens>(
+fn evaluate_tokens_with_options_and_resolver<'input, Tokens, R>(
     tokens: Tokens,
-    variables: &HashMap<String, Value>,
+    resolver: R,
     options: &EvalOptions,
 ) -> Result<Value, EvalError>
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
+    R: VariableResolver,
 {
     let parser = calc::ExpressionParser::new();
     let mut checked_tokens = Vec::new();
@@ -321,7 +411,7 @@ where
             }
 
             validate_ast_limits(&ast, options)?;
-            eval::eval(&ast, variables)
+            eval::eval(&ast, resolver)
         }
         Err(_) => Err(EvalError::ParserError),
     }
@@ -432,30 +522,34 @@ mod tests {
         }
     }
 
+    fn is_reserved_variable_name(name: &str) -> bool {
+        matches!(
+            name,
+            "min"
+                | "max"
+                | "pow"
+                | "mod"
+                | "rem"
+                | "round"
+                | "cos"
+                | "sin"
+                | "tan"
+                | "acos"
+                | "asin"
+                | "atan"
+                | "abs"
+                | "ln"
+                | "log"
+                | "exp"
+                | "floor"
+                | "ceil"
+                | "ceiling"
+        )
+    }
+
     fn variable_name() -> impl Strategy<Value = String> {
         "[a-zA-Z_][a-zA-Z0-9_]{0,12}".prop_filter("not a reserved function name", |name| {
-            !matches!(
-                name.as_str(),
-                "min"
-                    | "max"
-                    | "pow"
-                    | "mod"
-                    | "rem"
-                    | "round"
-                    | "cos"
-                    | "sin"
-                    | "tan"
-                    | "acos"
-                    | "asin"
-                    | "atan"
-                    | "abs"
-                    | "ln"
-                    | "log"
-                    | "exp"
-                    | "floor"
-                    | "ceil"
-                    | "ceiling"
-            )
+            !is_reserved_variable_name(name)
         })
     }
 
@@ -493,6 +587,14 @@ mod tests {
             evaluate_tokens(tokens, &variables),
             Err(EvalError::LexicalError(tokens::LexicalError::InvalidToken))
         );
+    }
+
+    #[test]
+    fn reserved_function_names_are_not_variable_names() {
+        assert!(is_reserved_variable_name("min"));
+        assert!(is_reserved_variable_name("ceiling"));
+        assert!(!is_reserved_variable_name("minimum"));
+        assert!(!is_reserved_variable_name("runtime_value"));
     }
 
     #[test]
@@ -723,6 +825,112 @@ mod tests {
         );
     }
 
+    #[test]
+    fn evaluate_with_resolves_variable_from_callback() {
+        let result = evaluate_with("base + 2", |name: &str| {
+            assert_eq!(name, "base");
+            Ok(Value::Integer(40))
+        });
+
+        assert_eq!(result, Ok(Value::Integer(42)));
+    }
+
+    #[test]
+    fn evaluate_with_infers_callback_argument_type() {
+        let result = evaluate_with("x", |name| match name {
+            "x" => Ok(Value::Integer(7)),
+            other => Err(EvalError::UnknownVariable(other.to_owned())),
+        });
+
+        assert_eq!(result, Ok(Value::Integer(7)));
+    }
+
+    #[test]
+    fn evaluate_with_reports_unknown_variable_from_callback() {
+        let result = evaluate_with("missing", |name: &str| {
+            Err(EvalError::UnknownVariable(name.to_owned()))
+        });
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("missing".to_owned()))
+        );
+    }
+
+    #[test]
+    fn evaluate_with_propagates_callback_error() {
+        let result = evaluate_with("x", |_name: &str| Err(EvalError::InvalidExpression));
+
+        assert_eq!(result, Err(EvalError::InvalidExpression));
+    }
+
+    #[test]
+    fn evaluate_with_allows_mutating_resolver_state() {
+        let mut calls = 0;
+
+        let result = evaluate_with("x + x", |name: &str| {
+            assert_eq!(name, "x");
+            calls += 1;
+            Ok(Value::Integer(calls))
+        });
+
+        assert_eq!(result, Ok(Value::Integer(3)));
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn evaluate_with_rejects_invalid_callback_floats_without_panicking() {
+        let cases = [
+            (f64::INFINITY, EvalError::NonFiniteFloat),
+            (f64::NEG_INFINITY, EvalError::NonFiniteFloat),
+            (f64::NAN, EvalError::NonFiniteFloat),
+            (f64::MIN_POSITIVE / 2.0, EvalError::SubnormalFloat),
+        ];
+
+        for (value, expected) in cases {
+            let result = std::panic::catch_unwind(|| {
+                evaluate_with("bad", |name: &str| {
+                    assert_eq!(name, "bad");
+                    Ok(Value::Float(value))
+                })
+            });
+
+            assert!(result.is_ok(), "{value:?} panicked");
+            assert_eq!(result.unwrap(), Err(expected));
+        }
+    }
+
+    #[test]
+    fn evaluate_with_options_and_resolver_enforces_resource_limits() {
+        use std::cell::Cell;
+
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+        let called = Cell::new(false);
+        let mut resolver = |_name: &str| {
+            called.set(true);
+            Ok(Value::Integer(0))
+        };
+
+        let result = evaluate_with_options_and_resolver("1 + 2", &mut resolver, &options);
+
+        assert_eq!(
+            result,
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::InputTooLarge { actual: 5, max: 1 }
+            ))
+        );
+        assert!(!called.get());
+
+        assert_eq!(
+            evaluate_with_options_and_resolver("x", &mut resolver, &EvalOptions::default()),
+            Ok(Value::Integer(0))
+        );
+        assert!(called.get());
+    }
+
     proptest! {
         #[test]
         fn prop_evaluate_integer_addition_matches_rust(
@@ -816,6 +1024,26 @@ mod tests {
                 evaluate(&name, &HashMap::new()),
                 Err(EvalError::UnknownVariable(name))
             );
+        }
+
+        #[test]
+        fn prop_hashmap_and_callback_resolution_match(
+            name in variable_name(),
+            value in -1_000_000i64..1_000_000,
+            addend in -1_000_000i64..1_000_000,
+        ) {
+            let expression = format!("{name} + {addend}");
+            let mut variables = HashMap::new();
+            variables.insert(name.clone(), Value::Integer(value));
+
+            let callback_result = evaluate_with(&expression, |candidate: &str| {
+                variables
+                    .get(candidate)
+                    .cloned()
+                    .ok_or_else(|| EvalError::UnknownVariable(candidate.to_owned()))
+            });
+
+            prop_assert_eq!(callback_result, evaluate(&expression, &variables));
         }
 
         #[test]
