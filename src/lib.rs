@@ -48,10 +48,18 @@ pub trait VariableResolver {
 
 impl<F> VariableResolver for F
 where
-    F: FnMut(&str) -> Result<Value, EvalError>,
+    F: for<'a> FnMut(&'a str) -> Result<Value, EvalError>,
 {
     fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
         self(name)
+    }
+}
+
+impl VariableResolver for &HashMap<String, Value> {
+    fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+        self.get(name)
+            .cloned()
+            .ok_or_else(|| EvalError::UnknownVariable(name.to_string()))
     }
 }
 
@@ -266,14 +274,69 @@ pub fn evaluate(text: &str, variables: &HashMap<String, Value>) -> Result<Value,
     evaluate_with_options(text, variables, &EvalOptions::default())
 }
 
+/// Parse and evaluate an expression string with a custom variable resolver.
+///
+/// This is the resolver-backed counterpart to [`evaluate`]. It uses
+/// [`EvalOptions::default`] for resource limits and accepts any
+/// [`VariableResolver`], including closures.
+///
+/// # Examples
+///
+/// ```
+/// # use shunting_yard::{evaluate_with, EvalError, Value};
+/// let value = evaluate_with("x + 2", |name: &str| match name {
+///     "x" => Ok(Value::Integer(40)),
+///     other => Err(EvalError::UnknownVariable(other.to_string())),
+/// });
+///
+/// assert_eq!(value, Ok(Value::Integer(42)));
+/// ```
+///
+/// # Errors
+///
+/// Returns [`EvalError::ParserError`] when `text` is not a valid expression.
+/// Evaluation errors from parsing, resource limits, expression evaluation, or
+/// the resolver are returned unchanged.
+pub fn evaluate_with<R>(text: &str, resolver: R) -> Result<Value, EvalError>
+where
+    R: VariableResolver,
+{
+    evaluate_with_options_and_resolver(text, resolver, &EvalOptions::default())
+}
+
 /// Parse and evaluate an expression string with explicit resource limits.
 ///
-/// See [`evaluate`] for the default-limited entrypoint.
+/// This map-backed entrypoint preserves the original public API while routing
+/// variable lookup through [`VariableResolver`].
+///
+/// See [`evaluate`] for the default-limited map-backed entrypoint.
 pub fn evaluate_with_options(
     text: &str,
     variables: &HashMap<String, Value>,
     options: &EvalOptions,
 ) -> Result<Value, EvalError> {
+    evaluate_with_options_and_resolver(text, variables, options)
+}
+
+/// Parse and evaluate an expression string with explicit resource limits and a
+/// custom variable resolver.
+///
+/// This is the most general public entrypoint: callers provide both resource
+/// limits and the variable resolution strategy.
+///
+/// # Errors
+///
+/// Returns [`EvalError::ResourceLimit`] when `text`, token count, AST size,
+/// depth, function arity, or parser recovery count exceeds `options`.
+/// Parser, lexer, evaluation, and resolver errors are returned unchanged.
+pub fn evaluate_with_options_and_resolver<R>(
+    text: &str,
+    resolver: R,
+    options: &EvalOptions,
+) -> Result<Value, EvalError>
+where
+    R: VariableResolver,
+{
     if text.len() > options.max_input_bytes {
         return Err(EvalError::ResourceLimit(
             ResourceLimitError::InputTooLarge {
@@ -284,7 +347,7 @@ pub fn evaluate_with_options(
     }
 
     let lexer = lexer::Lexer::new(text);
-    evaluate_tokens_with_options(lexer, variables, options)
+    evaluate_tokens_with_options_and_resolver(lexer, resolver, options)
 }
 
 #[cfg(test)]
@@ -295,16 +358,17 @@ fn evaluate_tokens<'input, Tokens>(
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
 {
-    evaluate_tokens_with_options(tokens, variables, &EvalOptions::default())
+    evaluate_tokens_with_options_and_resolver(tokens, variables, &EvalOptions::default())
 }
 
-fn evaluate_tokens_with_options<'input, Tokens>(
+fn evaluate_tokens_with_options_and_resolver<'input, Tokens, R>(
     tokens: Tokens,
-    variables: &HashMap<String, Value>,
+    resolver: R,
     options: &EvalOptions,
 ) -> Result<Value, EvalError>
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
+    R: VariableResolver,
 {
     let parser = calc::ExpressionParser::new();
     let mut checked_tokens = Vec::new();
@@ -348,7 +412,7 @@ where
             }
 
             validate_ast_limits(&ast, options)?;
-            eval::eval(&ast, variables)
+            eval::eval(&ast, resolver)
         }
         Err(_) => Err(EvalError::ParserError),
     }

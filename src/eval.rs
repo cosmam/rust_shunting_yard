@@ -4,7 +4,7 @@
 //!
 //! This module evaluates an [`Expression`] tree into a runtime [`Value`]. Literal
 //! values evaluate directly, variables are resolved from a caller-provided
-//! binding map, and compound expressions are evaluated recursively before their
+//! resolver, and compound expressions are evaluated recursively before their
 //! operators or functions are applied.
 //!
 //! # Errors
@@ -13,9 +13,8 @@
 //! referenced variable is missing, or an operator is used with the wrong arity.
 
 use crate::ast::{Expression, Func, Opcode};
-use crate::{ArithmeticOp, EvalError, Value};
+use crate::{ArithmeticOp, EvalError, Value, VariableResolver};
 use roundable::{Roundable, Tie};
-use std::collections::HashMap;
 use std::num::FpCategory;
 
 const EPSILON: f64 = 0.000001;
@@ -149,13 +148,13 @@ fn checked_shr_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
 ///
 /// `expr` is evaluated recursively. Literal expression nodes become their
 /// corresponding [`Value`] variants, variable nodes are looked up in
-/// `variables`, and compound nodes delegate to the appropriate unary, binary, or
+/// `resolver`, and compound nodes delegate to the appropriate unary, binary, or
 /// function evaluator after their child expressions have been evaluated.
 ///
 /// # Errors
 ///
 /// Returns [`EvalError::UnknownVariable`] when `expr` references a variable that
-/// is not present in `variables`.
+/// is not present in `resolver`.
 ///
 /// Returns [`EvalError::InvalidExpression`] when `expr` contains an
 /// [`Expression::Error`] or [`Expression::LexicalError`] node.
@@ -163,49 +162,56 @@ fn checked_shr_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
 /// Returns [`EvalError::InvalidArity`] when a unary or binary operator is used
 /// in a position where that operator is not supported. The grammar should prevent
 /// this, so this is mostly a defensive programming decision
-pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Value, EvalError> {
+pub fn eval<R>(expr: &Expression, mut resolver: R) -> Result<Value, EvalError>
+where
+    R: VariableResolver,
+{
+    eval_with_resolver(expr, &mut resolver)
+}
+
+fn eval_with_resolver<R>(expr: &Expression, resolver: &mut R) -> Result<Value, EvalError>
+where
+    R: VariableResolver + ?Sized,
+{
     match expr {
         Expression::Bool(n) => Ok(Value::Bool(*n)),
         Expression::Integer(n) => Ok(Value::Integer(*n)),
         Expression::Float(n) => checked_float(*n),
 
         Expression::UnaryOperation { operator, value } => {
-            let value = eval(value, variables)?;
+            let value = eval_with_resolver(value, resolver)?;
             apply_unary(operator, value)
         }
 
         Expression::BinaryOperation { lhs, operator, rhs } => {
-            let left = eval(lhs, variables)?;
-            let right = eval(rhs, variables)?;
+            let left = eval_with_resolver(lhs, resolver)?;
+            let right = eval_with_resolver(rhs, resolver)?;
             apply_binary(operator, left, right)
         }
 
         Expression::Function { func, arguments } => {
             let values = arguments
                 .iter()
-                .map(|v| eval(v, variables))
+                .map(|v| eval_with_resolver(v, resolver))
                 .collect::<Result<Vec<_>, _>>()?;
 
             apply_function(func, values)
         }
 
         Expression::Variable(name) => {
-            if let Some(value) = variables.get(*name) {
-                validate_value(value)
-            } else {
-                Err(EvalError::UnknownVariable(name.to_string()))
-            }
+            let value = resolver.resolve(name)?;
+            validate_value(value)
         }
 
         Expression::Error | Expression::LexicalError(_) => Err(EvalError::InvalidExpression),
     }
 }
 
-fn validate_value(value: &Value) -> Result<Value, EvalError> {
+fn validate_value(value: Value) -> Result<Value, EvalError> {
     match value {
-        Value::Bool(value) => Ok(Value::Bool(*value)),
-        Value::Integer(value) => Ok(Value::Integer(*value)),
-        Value::Float(value) => checked_float(*value),
+        Value::Bool(value) => Ok(Value::Bool(value)),
+        Value::Integer(value) => Ok(Value::Integer(value)),
+        Value::Float(value) => checked_float(value),
     }
 }
 
@@ -1333,6 +1339,7 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use rstest::*;
+    use std::collections::HashMap;
 
     // in general, we'll test from the public eval function. The exceptions
     // are redundant/defensive error handling, which we're testing as a way
