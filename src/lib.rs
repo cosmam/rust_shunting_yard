@@ -814,6 +814,97 @@ mod tests {
         );
     }
 
+    #[test]
+    fn evaluate_with_resolves_variable_from_callback() {
+        let result = evaluate_with("base + 2", |name: &str| match name {
+            "base" => Ok(Value::Integer(40)),
+            other => Err(EvalError::UnknownVariable(other.to_owned())),
+        });
+
+        assert_eq!(result, Ok(Value::Integer(42)));
+    }
+
+    #[test]
+    fn evaluate_with_reports_unknown_variable_from_callback() {
+        let result = evaluate_with("missing", |name: &str| {
+            Err(EvalError::UnknownVariable(name.to_owned()))
+        });
+
+        assert_eq!(
+            result,
+            Err(EvalError::UnknownVariable("missing".to_owned()))
+        );
+    }
+
+    #[test]
+    fn evaluate_with_propagates_callback_error() {
+        let result = evaluate_with("x", |_name: &str| Err(EvalError::InvalidExpression));
+
+        assert_eq!(result, Err(EvalError::InvalidExpression));
+    }
+
+    #[test]
+    fn evaluate_with_allows_mutating_resolver_state() {
+        let mut calls = 0;
+
+        let result = evaluate_with("x + x", |name: &str| {
+            assert_eq!(name, "x");
+            calls += 1;
+            Ok(Value::Integer(calls))
+        });
+
+        assert_eq!(result, Ok(Value::Integer(3)));
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn evaluate_with_rejects_invalid_callback_floats_without_panicking() {
+        let cases = [
+            (f64::INFINITY, EvalError::NonFiniteFloat),
+            (f64::NEG_INFINITY, EvalError::NonFiniteFloat),
+            (f64::NAN, EvalError::NonFiniteFloat),
+            (f64::MIN_POSITIVE / 2.0, EvalError::SubnormalFloat),
+        ];
+
+        for (value, expected) in cases {
+            let result = std::panic::catch_unwind(|| {
+                evaluate_with("bad", |name: &str| {
+                    assert_eq!(name, "bad");
+                    Ok(Value::Float(value))
+                })
+            });
+
+            assert!(result.is_ok(), "{value:?} panicked");
+            assert_eq!(result.unwrap(), Err(expected));
+        }
+    }
+
+    #[test]
+    fn evaluate_with_options_and_resolver_enforces_resource_limits() {
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+        let mut called = false;
+
+        let result = evaluate_with_options_and_resolver(
+            "1 + 2",
+            |_name: &str| {
+                called = true;
+                Ok(Value::Integer(0))
+            },
+            &options,
+        );
+
+        assert_eq!(
+            result,
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::InputTooLarge { actual: 5, max: 1 }
+            ))
+        );
+        assert!(!called);
+    }
+
     proptest! {
         #[test]
         fn prop_evaluate_integer_addition_matches_rust(
@@ -907,6 +998,27 @@ mod tests {
                 evaluate(&name, &HashMap::new()),
                 Err(EvalError::UnknownVariable(name))
             );
+        }
+
+        #[test]
+        fn prop_hashmap_and_callback_resolution_match(
+            name in variable_name(),
+            value in -1_000_000i64..1_000_000,
+            addend in -1_000_000i64..1_000_000,
+        ) {
+            let expression = format!("{name} + {addend}");
+            let mut variables = HashMap::new();
+            variables.insert(name.clone(), Value::Integer(value));
+
+            let callback_result = evaluate_with(&expression, |candidate: &str| {
+                if candidate == name {
+                    Ok(Value::Integer(value))
+                } else {
+                    Err(EvalError::UnknownVariable(candidate.to_owned()))
+                }
+            });
+
+            prop_assert_eq!(callback_result, evaluate(&expression, &variables));
         }
 
         #[test]
