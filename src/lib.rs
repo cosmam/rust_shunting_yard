@@ -28,6 +28,33 @@ pub enum Value {
     Float(f64),
 }
 
+/// Resolves variable names during expression evaluation.
+///
+/// Implement this trait when values should come from a source other than a
+/// [`HashMap`], such as a runtime context, cache, external environment, or
+/// future FFI adapter.
+///
+/// Returned values are validated by evaluation before use, so invalid
+/// floating-point values such as NaN, infinity, and subnormal floats are
+/// rejected.
+pub trait VariableResolver {
+    /// Resolve one variable name into a runtime value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EvalError`] when the variable is unknown or resolution fails.
+    fn resolve(&mut self, name: &str) -> Result<Value, EvalError>;
+}
+
+impl<F> VariableResolver for F
+where
+    F: FnMut(&str) -> Result<Value, EvalError>,
+{
+    fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+        self(name)
+    }
+}
+
 /// Integer arithmetic operation associated with a checked arithmetic failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArithmeticOp {
