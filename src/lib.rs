@@ -523,30 +523,34 @@ mod tests {
         }
     }
 
+    fn is_reserved_variable_name(name: &str) -> bool {
+        matches!(
+            name,
+            "min"
+                | "max"
+                | "pow"
+                | "mod"
+                | "rem"
+                | "round"
+                | "cos"
+                | "sin"
+                | "tan"
+                | "acos"
+                | "asin"
+                | "atan"
+                | "abs"
+                | "ln"
+                | "log"
+                | "exp"
+                | "floor"
+                | "ceil"
+                | "ceiling"
+        )
+    }
+
     fn variable_name() -> impl Strategy<Value = String> {
         "[a-zA-Z_][a-zA-Z0-9_]{0,12}".prop_filter("not a reserved function name", |name| {
-            !matches!(
-                name.as_str(),
-                "min"
-                    | "max"
-                    | "pow"
-                    | "mod"
-                    | "rem"
-                    | "round"
-                    | "cos"
-                    | "sin"
-                    | "tan"
-                    | "acos"
-                    | "asin"
-                    | "atan"
-                    | "abs"
-                    | "ln"
-                    | "log"
-                    | "exp"
-                    | "floor"
-                    | "ceil"
-                    | "ceiling"
-            )
+            !is_reserved_variable_name(name)
         })
     }
 
@@ -584,6 +588,14 @@ mod tests {
             evaluate_tokens(tokens, &variables),
             Err(EvalError::LexicalError(tokens::LexicalError::InvalidToken))
         );
+    }
+
+    #[test]
+    fn reserved_function_names_are_not_variable_names() {
+        assert!(is_reserved_variable_name("min"));
+        assert!(is_reserved_variable_name("ceiling"));
+        assert!(!is_reserved_variable_name("minimum"));
+        assert!(!is_reserved_variable_name("runtime_value"));
     }
 
     #[test]
@@ -816,9 +828,9 @@ mod tests {
 
     #[test]
     fn evaluate_with_resolves_variable_from_callback() {
-        let result = evaluate_with("base + 2", |name: &str| match name {
-            "base" => Ok(Value::Integer(40)),
-            other => Err(EvalError::UnknownVariable(other.to_owned())),
+        let result = evaluate_with("base + 2", |name: &str| {
+            assert_eq!(name, "base");
+            Ok(Value::Integer(40))
         });
 
         assert_eq!(result, Ok(Value::Integer(42)));
@@ -881,20 +893,19 @@ mod tests {
 
     #[test]
     fn evaluate_with_options_and_resolver_enforces_resource_limits() {
+        use std::cell::Cell;
+
         let options = EvalOptions {
             max_input_bytes: 1,
             ..EvalOptions::default()
         };
-        let mut called = false;
+        let called = Cell::new(false);
+        let mut resolver = |_name: &str| {
+            called.set(true);
+            Ok(Value::Integer(0))
+        };
 
-        let result = evaluate_with_options_and_resolver(
-            "1 + 2",
-            |_name: &str| {
-                called = true;
-                Ok(Value::Integer(0))
-            },
-            &options,
-        );
+        let result = evaluate_with_options_and_resolver("1 + 2", &mut resolver, &options);
 
         assert_eq!(
             result,
@@ -902,7 +913,13 @@ mod tests {
                 ResourceLimitError::InputTooLarge { actual: 5, max: 1 }
             ))
         );
-        assert!(!called);
+        assert!(!called.get());
+
+        assert_eq!(
+            evaluate_with_options_and_resolver("x", &mut resolver, &EvalOptions::default()),
+            Ok(Value::Integer(0))
+        );
+        assert!(called.get());
     }
 
     proptest! {
@@ -1011,11 +1028,8 @@ mod tests {
             variables.insert(name.clone(), Value::Integer(value));
 
             let callback_result = evaluate_with(&expression, |candidate: &str| {
-                if candidate == name {
-                    Ok(Value::Integer(value))
-                } else {
-                    Err(EvalError::UnknownVariable(candidate.to_owned()))
-                }
+                assert_eq!(candidate, name);
+                Ok(Value::Integer(value))
             });
 
             prop_assert_eq!(callback_result, evaluate(&expression, &variables));

@@ -1980,7 +1980,7 @@ mod tests {
                 apply_binary_math_operation(&Opcode::Power, Value::Integer(base), Value::Integer(exponent)),
                 base.checked_pow(exponent as u32)
                     .map(Value::Integer)
-                    .ok_or_else(|| EvalError::IntegerOverflow { op: ArithmeticOp::Power })
+                    .ok_or(EvalError::IntegerOverflow { op: ArithmeticOp::Power })
             );
         }
 
@@ -2622,7 +2622,7 @@ mod tests {
                 apply_function(&Func::Power, vec![Value::Integer(base), Value::Integer(exponent)]),
                 base.checked_pow(exponent as u32)
                     .map(Value::Integer)
-                    .ok_or_else(|| EvalError::IntegerOverflow { op: ArithmeticOp::Power })
+                    .ok_or(EvalError::IntegerOverflow { op: ArithmeticOp::Power })
             );
         }
 
@@ -3880,6 +3880,20 @@ mod tests {
         assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Value::Integer(1), Value::Float(0.0))]
+    #[case(Value::Float(1.0), Value::Integer(0))]
+    #[case(Value::Float(1.0), Value::Float(0.0))]
+    fn test_apply_modulo_function_mixed_zero_divisor(
+        #[case] lhs: Value,
+        #[case] rhs: Value,
+    ) {
+        let result = apply_modulo_function(lhs, rhs);
+
+        assert_eq!(result, Err(EvalError::DivisionByZero));
+    }
+
     #[rstest]
     #[case(Value::Bool(true), Value::Bool(false))]
     #[case(Value::Bool(true), Value::Integer(2))]
@@ -3890,6 +3904,20 @@ mod tests {
         let result = apply_remainder_function(lhs, rhs);
 
         assert!(matches!(result, Err(EvalError::InvalidType { .. })));
+    }
+
+    #[rustfmt::skip]
+    #[rstest]
+    #[case(Value::Integer(1), Value::Float(0.0))]
+    #[case(Value::Float(1.0), Value::Integer(0))]
+    #[case(Value::Float(1.0), Value::Float(0.0))]
+    fn test_apply_remainder_function_mixed_zero_divisor(
+        #[case] lhs: Value,
+        #[case] rhs: Value,
+    ) {
+        let result = apply_remainder_function(lhs, rhs);
+
+        assert_eq!(result, Err(EvalError::DivisionByZero));
     }
 
     /************ Unary function tests *************/
