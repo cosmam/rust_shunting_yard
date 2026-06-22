@@ -48,7 +48,7 @@ pub trait VariableResolver {
 
 impl<F> VariableResolver for F
 where
-    F: for<'a> FnMut(&'a str) -> Result<Value, EvalError>,
+    F: FnMut(&str) -> Result<Value, EvalError>,
 {
     fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
         self(name)
@@ -276,15 +276,14 @@ pub fn evaluate(text: &str, variables: &HashMap<String, Value>) -> Result<Value,
 
 /// Parse and evaluate an expression string with a custom variable resolver.
 ///
-/// This is the resolver-backed counterpart to [`evaluate`]. It uses
-/// [`EvalOptions::default`] for resource limits and accepts any
-/// [`VariableResolver`], including closures.
+/// This is the callback-backed counterpart to [`evaluate`]. It uses
+/// [`EvalOptions::default`] for resource limits.
 ///
 /// # Examples
 ///
 /// ```
 /// # use shunting_yard::{evaluate_with, EvalError, Value};
-/// let value = evaluate_with("x + 2", |name: &str| match name {
+/// let value = evaluate_with("x + 2", |name| match name {
 ///     "x" => Ok(Value::Integer(40)),
 ///     other => Err(EvalError::UnknownVariable(other.to_string())),
 /// });
@@ -299,7 +298,7 @@ pub fn evaluate(text: &str, variables: &HashMap<String, Value>) -> Result<Value,
 /// the resolver are returned unchanged.
 pub fn evaluate_with<R>(text: &str, resolver: R) -> Result<Value, EvalError>
 where
-    R: VariableResolver,
+    R: FnMut(&str) -> Result<Value, EvalError>,
 {
     evaluate_with_options_and_resolver(text, resolver, &EvalOptions::default())
 }
@@ -837,6 +836,16 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_with_infers_callback_argument_type() {
+        let result = evaluate_with("x", |name| match name {
+            "x" => Ok(Value::Integer(7)),
+            other => Err(EvalError::UnknownVariable(other.to_owned())),
+        });
+
+        assert_eq!(result, Ok(Value::Integer(7)));
+    }
+
+    #[test]
     fn evaluate_with_reports_unknown_variable_from_callback() {
         let result = evaluate_with("missing", |name: &str| {
             Err(EvalError::UnknownVariable(name.to_owned()))
@@ -1028,8 +1037,10 @@ mod tests {
             variables.insert(name.clone(), Value::Integer(value));
 
             let callback_result = evaluate_with(&expression, |candidate: &str| {
-                assert_eq!(candidate, name);
-                Ok(Value::Integer(value))
+                variables
+                    .get(candidate)
+                    .cloned()
+                    .ok_or_else(|| EvalError::UnknownVariable(candidate.to_owned()))
             });
 
             prop_assert_eq!(callback_result, evaluate(&expression, &variables));
