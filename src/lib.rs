@@ -309,6 +309,7 @@ where
 ///
 /// This is the default-limited entrypoint for named [`VariableResolver`]
 /// implementations. Use [`evaluate_with`] for callback-based resolution.
+/// Resolver-returned values are validated before evaluation uses them.
 ///
 /// # Examples
 ///
@@ -930,6 +931,38 @@ mod tests {
             Ok(Value::Integer(40))
         );
         assert_eq!(lookups.get(), 2);
+    }
+
+    #[test]
+    fn evaluate_with_resolver_rejects_invalid_float_values_without_panicking() {
+        struct StaticFloatResolver {
+            value: f64,
+        }
+
+        impl VariableResolver for StaticFloatResolver {
+            fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+                match name {
+                    "x" => Ok(Value::Float(self.value)),
+                    other => Err(EvalError::UnknownVariable(other.to_owned())),
+                }
+            }
+        }
+
+        let cases = [
+            (f64::INFINITY, EvalError::NonFiniteFloat),
+            (f64::NEG_INFINITY, EvalError::NonFiniteFloat),
+            (f64::NAN, EvalError::NonFiniteFloat),
+            (f64::MIN_POSITIVE / 2.0, EvalError::SubnormalFloat),
+        ];
+
+        for (value, expected) in cases {
+            let result = std::panic::catch_unwind(|| {
+                evaluate_with_resolver("x", StaticFloatResolver { value })
+            });
+
+            assert!(result.is_ok(), "{value:?} panicked");
+            assert_eq!(result.unwrap(), Err(expected));
+        }
     }
 
     #[test]
