@@ -193,6 +193,9 @@ pub enum EvalError {
     /// A floating-point operation produced NaN or infinity.
     #[error("non-finite float result")]
     NonFiniteFloat,
+    /// A floating-point operation produced a subnormal result.
+    #[error("subnormal float result")]
+    SubnormalFloat,
     /// Evaluation stopped because a resource limit was exceeded.
     #[error("{0}")]
     ResourceLimit(ResourceLimitError),
@@ -517,8 +520,10 @@ mod tests {
         let mut variables = HashMap::new();
         variables.insert("low".to_owned(), Value::Integer(i64::MIN));
         variables.insert("high".to_owned(), Value::Integer(i64::MAX));
-        variables.insert("inf".to_owned(), Value::Float(f64::INFINITY));
-        variables.insert("nan".to_owned(), Value::Float(f64::NAN));
+        variables.insert("inf_var".to_owned(), Value::Float(f64::INFINITY));
+        variables.insert("nan_var".to_owned(), Value::Float(f64::NAN));
+        variables.insert("tiny".to_owned(), Value::Float(f64::MIN_POSITIVE / 2.0));
+        variables.insert("min_normal".to_owned(), Value::Float(f64::MIN_POSITIVE));
 
         let cases = [
             "9223372036854775807 + 1",
@@ -541,8 +546,12 @@ mod tests {
             "asin(2)",
             "exp(10000)",
             "1e308 * 1e308",
-            "inf + 1",
-            "nan + 1",
+            "inf_var",
+            "nan_var",
+            "tiny",
+            "min_normal / 2.0",
+            "inf_var + 1",
+            "nan_var + 1",
             "$",
             "1 +",
         ];
@@ -560,7 +569,10 @@ mod tests {
     fn evaluate_returns_typed_errors_for_hostile_inputs() {
         let mut variables = HashMap::new();
         variables.insert("low".to_owned(), Value::Integer(i64::MIN));
-        variables.insert("inf".to_owned(), Value::Float(f64::INFINITY));
+        variables.insert("inf_var".to_owned(), Value::Float(f64::INFINITY));
+        variables.insert("nan_var".to_owned(), Value::Float(f64::NAN));
+        variables.insert("tiny".to_owned(), Value::Float(f64::MIN_POSITIVE / 2.0));
+        variables.insert("min_normal".to_owned(), Value::Float(f64::MIN_POSITIVE));
 
         assert_eq!(
             evaluate("9223372036854775807 + 1", &variables),
@@ -597,8 +609,21 @@ mod tests {
             Err(EvalError::NonFiniteFloat)
         );
         assert_eq!(
-            evaluate("inf + 1", &variables),
+            evaluate("inf_var + 1", &variables),
             Err(EvalError::NonFiniteFloat)
+        );
+        assert_eq!(
+            evaluate("inf_var", &variables),
+            Err(EvalError::NonFiniteFloat)
+        );
+        assert_eq!(
+            evaluate("nan_var", &variables),
+            Err(EvalError::NonFiniteFloat)
+        );
+        assert_eq!(evaluate("tiny", &variables), Err(EvalError::SubnormalFloat));
+        assert_eq!(
+            evaluate("min_normal / 2.0", &variables),
+            Err(EvalError::SubnormalFloat)
         );
         assert_eq!(
             evaluate("true + 1", &variables),

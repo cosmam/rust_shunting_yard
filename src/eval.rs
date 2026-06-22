@@ -16,6 +16,7 @@ use crate::ast::{Expression, Func, Opcode};
 use crate::{ArithmeticOp, EvalError, Value};
 use roundable::{Roundable, Tie};
 use std::collections::HashMap;
+use std::num::FpCategory;
 
 const EPSILON: f64 = 0.000001;
 
@@ -36,10 +37,14 @@ fn value_type(value: &Value) -> &'static str {
 }
 
 fn checked_float(value: f64) -> Result<Value, EvalError> {
-    if value.is_finite() {
-        Ok(Value::Float(value))
-    } else {
-        Err(EvalError::NonFiniteFloat)
+    checked_f64(value).map(Value::Float)
+}
+
+fn checked_f64(value: f64) -> Result<f64, EvalError> {
+    match value.classify() {
+        FpCategory::Nan | FpCategory::Infinite => Err(EvalError::NonFiniteFloat),
+        FpCategory::Subnormal => Err(EvalError::SubnormalFloat),
+        FpCategory::Zero | FpCategory::Normal => Ok(value),
     }
 }
 
@@ -162,7 +167,7 @@ pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Val
     match expr {
         Expression::Bool(n) => Ok(Value::Bool(*n)),
         Expression::Integer(n) => Ok(Value::Integer(*n)),
-        Expression::Float(n) => Ok(Value::Float(*n)),
+        Expression::Float(n) => checked_float(*n),
 
         Expression::UnaryOperation { operator, value } => {
             let value = eval(value, variables)?;
@@ -186,13 +191,21 @@ pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Val
 
         Expression::Variable(name) => {
             if let Some(value) = variables.get(*name) {
-                Ok(value.clone())
+                validate_value(value)
             } else {
                 Err(EvalError::UnknownVariable(name.to_string()))
             }
         }
 
         Expression::Error | Expression::LexicalError(_) => Err(EvalError::InvalidExpression),
+    }
+}
+
+fn validate_value(value: &Value) -> Result<Value, EvalError> {
+    match value {
+        Value::Bool(value) => Ok(Value::Bool(*value)),
+        Value::Integer(value) => Ok(Value::Integer(*value)),
+        Value::Float(value) => checked_float(*value),
     }
 }
 
@@ -248,6 +261,7 @@ fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
 fn apply_unary_math(op: &Opcode, val: Value) -> Result<Value, EvalError> {
     match (op, val) {
         (_, Value::Bool(_)) => Err(invalid_type("integer or float", "bool")),
+        (Opcode::Plus, Value::Float(f)) => checked_float(f),
         (Opcode::Plus, value) => Ok(value),
         (Opcode::Minus, Value::Integer(i)) => checked_neg_i64(i),
         (Opcode::Minus, Value::Float(f)) => checked_float(-f),
@@ -448,7 +462,8 @@ fn convert_binary_values(op: &Opcode, lhs: Value, rhs: Value) -> (&Opcode, Value
 /// arithmetic opcodes here. Returns [`EvalError::InvalidType`] for boolean
 /// operands. Arithmetic failures are returned as typed errors such as
 /// [`EvalError::DivisionByZero`], [`EvalError::IntegerOverflow`],
-/// [`EvalError::InvalidExponent`], or [`EvalError::NonFiniteFloat`].
+/// [`EvalError::InvalidExponent`], [`EvalError::NonFiniteFloat`], or
+/// [`EvalError::SubnormalFloat`].
 fn apply_binary_math_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     match convert_binary_values(op, lhs, rhs) {
         (Opcode::Equals, _, _)
@@ -737,7 +752,8 @@ fn apply_min_function(vals: Vec<Value>) -> Result<Value, EvalError> {
                     }
                 }
             }
-            min.map(Value::Float).ok_or(invalid_arity("at least 1", 0))
+            min.map(checked_float)
+                .unwrap_or_else(|| Err(invalid_arity("at least 1", 0)))
         }
         [Value::Bool(_), ..] => Err(invalid_type("integer or float", "bool")),
     }
@@ -787,7 +803,8 @@ fn apply_max_function(vals: Vec<Value>) -> Result<Value, EvalError> {
                     }
                 }
             }
-            max.map(Value::Float).ok_or(invalid_arity("at least 1", 0))
+            max.map(checked_float)
+                .unwrap_or_else(|| Err(invalid_arity("at least 1", 0)))
         }
         [Value::Bool(_), ..] => Err(invalid_type("integer or float", "bool")),
     }
@@ -907,7 +924,7 @@ fn round_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
 ///
 /// Returns [`EvalError::InvalidPrecision`] when precision is non-positive or
 /// [`EvalError::NonFiniteFloat`] when the operation cannot produce a finite
-/// float.
+/// float, or [`EvalError::SubnormalFloat`] for subnormal results.
 fn round_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
     if precision <= 0.0 {
         return Err(EvalError::InvalidPrecision);
@@ -915,11 +932,7 @@ fn round_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
 
     let rounded = value.try_round_to(precision, Tie::Up).unwrap_or(f64::NAN);
 
-    if rounded.is_finite() {
-        Ok(rounded)
-    } else {
-        Err(EvalError::NonFiniteFloat)
-    }
+    checked_f64(rounded)
 }
 
 /// Round a float and convert the result to an integer.
@@ -938,9 +951,7 @@ fn checked_f64_to_i64(value: f64, _operation: &str) -> Result<i64, EvalError> {
     const I64_MIN_AS_F64: f64 = i64::MIN as f64;
     const I64_MAX_EXCLUSIVE_AS_F64: f64 = -(i64::MIN as f64);
 
-    if !value.is_finite() {
-        return Err(EvalError::NonFiniteFloat);
-    }
+    checked_f64(value)?;
 
     if !(I64_MIN_AS_F64..I64_MAX_EXCLUSIVE_AS_F64).contains(&value) {
         return Err(EvalError::IntegerOverflow {
@@ -1010,18 +1021,15 @@ fn floor_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
 /// # Errors
 ///
 /// Returns [`EvalError::InvalidPrecision`] when precision is non-positive or
-/// [`EvalError::NonFiniteFloat`] when the computed floor is not finite.
+/// [`EvalError::NonFiniteFloat`] when the computed floor is not finite, or
+/// [`EvalError::SubnormalFloat`] for subnormal results.
 fn floor_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
     if precision <= 0.0 {
         return Err(EvalError::InvalidPrecision);
     }
 
     let result = (value / precision).floor() * precision;
-    if result.is_finite() {
-        Ok(result)
-    } else {
-        Err(EvalError::NonFiniteFloat)
-    }
+    checked_f64(result)
 }
 
 /// Floor a float and convert the result to an integer.
@@ -1095,18 +1103,15 @@ fn ceiling_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
 /// # Errors
 ///
 /// Returns [`EvalError::InvalidPrecision`] when precision is non-positive or
-/// [`EvalError::NonFiniteFloat`] when the computed ceiling is not finite.
+/// [`EvalError::NonFiniteFloat`] when the computed ceiling is not finite, or
+/// [`EvalError::SubnormalFloat`] for subnormal results.
 fn ceiling_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
     if precision <= 0.0 {
         return Err(EvalError::InvalidPrecision);
     }
 
     let result = (value / precision).ceil() * precision;
-    if result.is_finite() {
-        Ok(result)
-    } else {
-        Err(EvalError::NonFiniteFloat)
-    }
+    checked_f64(result)
 }
 
 /// Ceiling a float and convert the result to an integer.
@@ -1301,7 +1306,7 @@ fn pare_vector_unary(vals: Vec<Value>) -> Result<Value, EvalError> {
     match value {
         Value::Bool(_) => Err(invalid_type("integer or float", "bool")),
         Value::Integer(value) => checked_float(value as f64),
-        Value::Float(value) => Ok(Value::Float(value)),
+        Value::Float(value) => checked_float(value),
     }
 }
 
@@ -1354,11 +1359,12 @@ mod tests {
     }
 
     fn small_f64() -> impl Strategy<Value = f64> {
-        -1_000_000.0f64..1_000_000.0
+        (-1_000_000.0f64..1_000_000.0)
+            .prop_filter("normal or zero float", |value| valid_float(*value))
     }
 
     fn tiny_f64() -> impl Strategy<Value = f64> {
-        -1_000.0f64..1_000.0
+        (-1_000.0f64..1_000.0).prop_filter("normal or zero float", |value| valid_float(*value))
     }
 
     fn nonzero_tiny_f64() -> impl Strategy<Value = f64> {
@@ -1366,11 +1372,15 @@ mod tests {
     }
 
     fn positive_f64() -> impl Strategy<Value = f64> {
-        0.000001f64..1_000_000.0
+        (0.000001f64..1_000_000.0).prop_filter("normal or zero float", |value| valid_float(*value))
     }
 
     fn unit_f64() -> impl Strategy<Value = f64> {
-        -1.0f64..1.0
+        (-1.0f64..1.0).prop_filter("normal or zero float", |value| valid_float(*value))
+    }
+
+    fn valid_float(value: f64) -> bool {
+        matches!(value.classify(), FpCategory::Zero | FpCategory::Normal)
     }
 
     fn generated_value() -> impl Strategy<Value = Value> {
@@ -1401,6 +1411,21 @@ mod tests {
         let result = eval(&expr, &variables);
 
         assert_eq!(result, Ok(Value::Integer(42)));
+    }
+
+    #[rstest]
+    #[case(f64::INFINITY, EvalError::NonFiniteFloat)]
+    #[case(f64::NEG_INFINITY, EvalError::NonFiniteFloat)]
+    #[case(f64::NAN, EvalError::NonFiniteFloat)]
+    #[case(f64::MIN_POSITIVE / 2.0, EvalError::SubnormalFloat)]
+    fn test_eval_variable_rejects_invalid_float(#[case] value: f64, #[case] expected: EvalError) {
+        let mut variables: HashMap<String, Value> = HashMap::new();
+        variables.insert("Test_Name".to_string(), Value::Float(value));
+        let expr = Box::new(Expression::Variable("Test_Name"));
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(expected));
     }
 
     #[rstest]
@@ -1890,15 +1915,15 @@ mod tests {
         fn prop_float_unary_math_matches_rust(value in small_f64()) {
             prop_assert_eq!(
                 apply_unary(&Opcode::Plus, Value::Float(value)),
-                Ok(Value::Float(value))
+                checked_float(value)
             );
             prop_assert_eq!(
                 apply_unary(&Opcode::Minus, Value::Float(value)),
-                Ok(Value::Float(-value))
+                checked_float(-value)
             );
             prop_assert_eq!(
                 apply_unary(&Opcode::Degrees, Value::Float(value)),
-                Ok(Value::Float(value.to_radians()))
+                checked_float(value.to_radians())
             );
         }
 
@@ -1956,23 +1981,23 @@ mod tests {
         fn prop_float_binary_math_matches_rust(lhs in tiny_f64(), rhs in nonzero_tiny_f64()) {
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Plus, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs + rhs))
+                checked_float(lhs + rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Minus, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs - rhs))
+                checked_float(lhs - rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Multiply, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs * rhs))
+                checked_float(lhs * rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Divide, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs / rhs))
+                checked_float(lhs / rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Modulo, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs % rhs))
+                checked_float(lhs % rhs)
             );
         }
 
@@ -1980,15 +2005,15 @@ mod tests {
         fn prop_mixed_numeric_binary_math_promotes_to_float(lhs in tiny_i64(), rhs in nonzero_tiny_f64()) {
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Plus, Value::Integer(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs as f64 + rhs))
+                checked_float(lhs as f64 + rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Multiply, Value::Float(rhs), Value::Integer(lhs)),
-                Ok(Value::Float(rhs * lhs as f64))
+                checked_float(rhs * lhs as f64)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Divide, Value::Integer(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs as f64 / rhs))
+                checked_float(lhs as f64 / rhs)
             );
         }
 
@@ -2180,7 +2205,10 @@ mod tests {
             );
             prop_assert_eq!(
                 apply_binary_comparison(&Opcode::ApproximatelyEquals, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Bool((lhs - rhs).abs() <= (lhs.max(rhs) * EPSILON)))
+                Ok(Value::Bool({
+                    let scale = lhs.abs().max(rhs.abs()).max(1.0);
+                    (lhs - rhs).abs() <= EPSILON * scale
+                }))
             );
         }
 
@@ -2483,34 +2511,34 @@ mod tests {
         fn prop_rounding_functions_reject_nonpositive_integer_precision(value in small_i64(), precision in -1_000i64..=0) {
             assert!(matches!(
                 apply_round_function(Value::Integer(value), Some(Value::Integer(precision))),
-                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
+                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
             ));
             assert!(matches!(
                 apply_floor_function(Value::Integer(value), Some(Value::Integer(precision))),
-                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
+                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
             ));
             assert!(matches!(
                 apply_ceiling_function(Value::Integer(value), Some(Value::Integer(precision))),
-                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
+                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
             ));
         }
 
         #[test]
         fn prop_float_rounding_rejects_nonpositive_precision(value in small_f64(), precision in -1_000.0f64..=0.0) {
-            assert!(matches!(round_f64(value, precision), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
-            assert!(matches!(floor_f64(value, precision), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
-            assert!(matches!(ceiling_f64(value, precision), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
-            assert!(matches!(round_f64(f64::INFINITY, 1.0), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
-            assert!(matches!(floor_f64(f64::INFINITY, 1.0), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
-            assert!(matches!(ceiling_f64(f64::INFINITY, 1.0), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(round_f64(value, precision), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(floor_f64(value, precision), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(ceiling_f64(value, precision), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(round_f64(f64::INFINITY, 1.0), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(floor_f64(f64::INFINITY, 1.0), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(ceiling_f64(f64::INFINITY, 1.0), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
         }
 
         #[test]
-        fn prop_float_to_integer_conversion_checks_bounds(value in -1_000_000.0f64..1_000_000.0) {
+        fn prop_float_to_integer_conversion_checks_bounds(value in small_f64()) {
             prop_assert_eq!(checked_f64_to_i64(value, "test"), Ok(value as i64));
             assert!(matches!(
                 checked_f64_to_i64(f64::INFINITY, "test"),
-                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
+                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
             ));
         }
 
@@ -2557,15 +2585,15 @@ mod tests {
             );
             prop_assert_eq!(
                 apply_function(&Func::Remainder, vec![Value::Integer(lhs), Value::Float(rhs)]),
-                Ok(Value::Float((lhs as f64).rem_euclid(rhs)))
+                checked_float((lhs as f64).rem_euclid(rhs))
             );
             prop_assert_eq!(
                 apply_function(&Func::Remainder, vec![Value::Float(rhs), Value::Integer(1)]),
-                Ok(Value::Float(rhs.rem_euclid(1.0)))
+                checked_float(rhs.rem_euclid(1.0))
             );
             prop_assert_eq!(
                 apply_function(&Func::Remainder, vec![Value::Float(rhs), Value::Float(rhs)]),
-                Ok(Value::Float(rhs.rem_euclid(rhs)))
+                checked_float(rhs.rem_euclid(rhs))
             );
             assert!(matches!(
                 apply_power_function(Value::Bool(true), Value::Integer(1)),
@@ -2593,20 +2621,20 @@ mod tests {
 
         #[test]
         fn prop_unary_float_functions_match_rust(value in -10.0f64..10.0) {
-            prop_assert_eq!(apply_function(&Func::Cos, vec![Value::Float(value)]), Ok(Value::Float(value.cos())));
-            prop_assert_eq!(apply_function(&Func::Sin, vec![Value::Float(value)]), Ok(Value::Float(value.sin())));
-            prop_assert_eq!(apply_function(&Func::Tan, vec![Value::Float(value)]), Ok(Value::Float(value.tan())));
-            prop_assert_eq!(apply_function(&Func::ATan, vec![Value::Float(value)]), Ok(Value::Float(value.atan())));
-            prop_assert_eq!(apply_function(&Func::Abs, vec![Value::Float(value)]), Ok(Value::Float(value.abs())));
-            prop_assert_eq!(apply_function(&Func::Exp, vec![Value::Float(value)]), Ok(Value::Float(value.exp())));
+            prop_assert_eq!(apply_function(&Func::Cos, vec![Value::Float(value)]), checked_float(value.cos()));
+            prop_assert_eq!(apply_function(&Func::Sin, vec![Value::Float(value)]), checked_float(value.sin()));
+            prop_assert_eq!(apply_function(&Func::Tan, vec![Value::Float(value)]), checked_float(value.tan()));
+            prop_assert_eq!(apply_function(&Func::ATan, vec![Value::Float(value)]), checked_float(value.atan()));
+            prop_assert_eq!(apply_function(&Func::Abs, vec![Value::Float(value)]), checked_float(value.abs()));
+            prop_assert_eq!(apply_function(&Func::Exp, vec![Value::Float(value)]), checked_float(value.exp()));
         }
 
         #[test]
         fn prop_unary_domain_limited_float_functions_match_rust(unit in unit_f64(), positive in positive_f64()) {
-            prop_assert_eq!(apply_function(&Func::ACos, vec![Value::Float(unit)]), Ok(Value::Float(unit.acos())));
-            prop_assert_eq!(apply_function(&Func::ASin, vec![Value::Float(unit)]), Ok(Value::Float(unit.asin())));
-            prop_assert_eq!(apply_function(&Func::Ln, vec![Value::Float(positive)]), Ok(Value::Float(positive.ln())));
-            prop_assert_eq!(apply_function(&Func::Log, vec![Value::Float(positive)]), Ok(Value::Float(positive.log10())));
+            prop_assert_eq!(apply_function(&Func::ACos, vec![Value::Float(unit)]), checked_float(unit.acos()));
+            prop_assert_eq!(apply_function(&Func::ASin, vec![Value::Float(unit)]), checked_float(unit.asin()));
+            prop_assert_eq!(apply_function(&Func::Ln, vec![Value::Float(positive)]), checked_float(positive.ln()));
+            prop_assert_eq!(apply_function(&Func::Log, vec![Value::Float(positive)]), checked_float(positive.log10()));
         }
     }
 
