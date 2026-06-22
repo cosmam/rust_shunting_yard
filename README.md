@@ -1,6 +1,6 @@
 A repo for me to play around with implementations of the Shunting Yard Algorithm! And possibly related cases, depending on how long my attention holds.
 
-## Backgroud Assumptions
+## Background Assumptions
 
 Any constants have already been replaced with their numerical values. So, for instance, neither pi nor π will be in the equation to evaluate; it will already have been replaced with 3.14159
 
@@ -39,7 +39,10 @@ assert_eq!(result, Ok(Value::Integer(42)));
 ```
 
 For a named resolver type, implement `VariableResolver` and pass it to
-`evaluate_with_resolver`:
+`evaluate_with_resolver`. Named resolvers are passed by value. The map-backed
+APIs use a built-in borrowed `HashMap` adapter; other borrowed named resolvers
+need their own explicit `VariableResolver` implementation for the borrowed type
+or a small wrapper:
 
 ```rust
 use shunting_yard::{evaluate_with_resolver, EvalError, Value, VariableResolver};
@@ -61,10 +64,38 @@ assert_eq!(
 );
 ```
 
-Use `evaluate_with_options` or `evaluate_with_options_and_resolver` when a
-caller needs explicit resource limits. All evaluation paths reject variable
-values and operation results that would produce NaN, infinity, or subnormal
-floating-point values.
+Use `evaluate_with_options` for map-backed evaluation with explicit limits, or
+`evaluate_with_options_and_resolver` for named resolvers with explicit limits:
+
+```rust
+use shunting_yard::{
+    evaluate_with_options_and_resolver, EvalError, EvalOptions, Value, VariableResolver,
+};
+
+struct RuntimeResolver;
+
+impl VariableResolver for RuntimeResolver {
+    fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+        match name {
+            "runtime_value" => Ok(Value::Integer(40)),
+            other => Err(EvalError::UnknownVariable(other.to_owned())),
+        }
+    }
+}
+
+let options = EvalOptions {
+    max_tokens: 3,
+    ..EvalOptions::default()
+};
+
+assert_eq!(
+    evaluate_with_options_and_resolver("runtime_value + 2", RuntimeResolver, &options),
+    Ok(Value::Integer(42))
+);
+```
+
+All evaluation paths reject variable values and operation results that would
+produce NaN, infinity, or subnormal floating-point values.
 
 ## Tokens to Parse
 

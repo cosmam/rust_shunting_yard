@@ -34,6 +34,11 @@ pub enum Value {
 /// [`HashMap`], such as a runtime context, cache, external environment, or
 /// future FFI adapter.
 ///
+/// Named resolver implementations are passed to resolver-based entrypoints by
+/// value. The crate provides a built-in borrowed [`HashMap`] adapter for the
+/// map-backed APIs, but it does not provide a blanket implementation for
+/// borrowed named resolver types.
+///
 /// Returned values are validated by evaluation before use, so invalid
 /// floating-point values such as NaN, infinity, and subnormal floats are
 /// rejected.
@@ -309,6 +314,7 @@ where
 ///
 /// This is the default-limited entrypoint for named [`VariableResolver`]
 /// implementations. Use [`evaluate_with`] for callback-based resolution.
+/// Named resolvers are passed by value.
 /// Resolver-returned values are validated before evaluation uses them.
 ///
 /// # Examples
@@ -352,29 +358,49 @@ pub fn evaluate_with_options(
     variables: &HashMap<String, Value>,
     options: &EvalOptions,
 ) -> Result<Value, EvalError> {
-    evaluate_with_options_and_resolver(
-        text,
-        |name: &str| {
-            variables
-                .get(name)
-                .cloned()
-                .ok_or_else(|| EvalError::UnknownVariable(name.to_owned()))
-        },
-        options,
-    )
+    evaluate_with_options_and_resolver(text, variables, options)
 }
 
 /// Parse and evaluate an expression string with explicit resource limits and a
 /// custom variable resolver.
 ///
 /// This is the most general public entrypoint: callers provide both resource
-/// limits and the variable resolution strategy.
+/// limits and the variable resolution strategy. Named resolvers are passed by
+/// value; borrowed named resolvers need their own explicit [`VariableResolver`]
+/// implementation for that borrowed type.
 ///
 /// # Errors
 ///
 /// Returns [`EvalError::ResourceLimit`] when `text`, token count, AST size,
 /// depth, function arity, or parser recovery count exceeds `options`.
 /// Parser, lexer, evaluation, and resolver errors are returned unchanged.
+///
+/// # Examples
+///
+/// ```
+/// # use shunting_yard::{
+/// #     evaluate_with_options_and_resolver, EvalError, EvalOptions, Value, VariableResolver,
+/// # };
+/// struct RuntimeResolver;
+///
+/// impl VariableResolver for RuntimeResolver {
+///     fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+///         match name {
+///             "x" => Ok(Value::Integer(40)),
+///             other => Err(EvalError::UnknownVariable(other.to_owned())),
+///         }
+///     }
+/// }
+///
+/// let options = EvalOptions {
+///     max_tokens: 3,
+///     ..EvalOptions::default()
+/// };
+///
+/// let value = evaluate_with_options_and_resolver("x + 2", RuntimeResolver, &options);
+///
+/// assert_eq!(value, Ok(Value::Integer(42)));
+/// ```
 pub fn evaluate_with_options_and_resolver<R>(
     text: &str,
     resolver: R,
@@ -404,16 +430,7 @@ fn evaluate_tokens<'input, Tokens>(
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
 {
-    evaluate_tokens_with_options_and_resolver(
-        tokens,
-        |name: &str| {
-            variables
-                .get(name)
-                .cloned()
-                .ok_or_else(|| EvalError::UnknownVariable(name.to_owned()))
-        },
-        &EvalOptions::default(),
-    )
+    evaluate_tokens_with_options_and_resolver(tokens, variables, &EvalOptions::default())
 }
 
 fn evaluate_tokens_with_options_and_resolver<'input, Tokens, R>(
@@ -1049,6 +1066,30 @@ mod tests {
             Ok(Value::Integer(0))
         );
         assert!(called.get());
+    }
+
+    #[test]
+    fn evaluate_with_options_and_resolver_accepts_named_resolver_type() {
+        struct RuntimeResolver;
+
+        impl VariableResolver for RuntimeResolver {
+            fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+                match name {
+                    "x" => Ok(Value::Integer(40)),
+                    other => Err(EvalError::UnknownVariable(other.to_owned())),
+                }
+            }
+        }
+
+        let options = EvalOptions {
+            max_tokens: 3,
+            ..EvalOptions::default()
+        };
+
+        assert_eq!(
+            evaluate_with_options_and_resolver("x + 2", RuntimeResolver, &options),
+            Ok(Value::Integer(42))
+        );
     }
 
     proptest! {
