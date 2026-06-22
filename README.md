@@ -24,18 +24,41 @@ assert_eq!(
 );
 ```
 
-For variable sources that are not a map, use `evaluate_with` and provide any
-resolver callback that returns `Result<Value, EvalError>`:
+For callback-based variable sources that are not a map, use `evaluate_with` and
+provide a resolver callback that returns `Result<Value, EvalError>`:
 
 ```rust
 use shunting_yard::{evaluate_with, EvalError, Value};
 
-let result = evaluate_with("runtime_value + 2", |name: &str| match name {
+let result = evaluate_with("runtime_value + 2", |name| match name {
     "runtime_value" => Ok(Value::Integer(40)),
     other => Err(EvalError::UnknownVariable(other.to_owned())),
 });
 
 assert_eq!(result, Ok(Value::Integer(42)));
+```
+
+For a named resolver type, implement `VariableResolver` and pass it to
+`evaluate_with_resolver`:
+
+```rust
+use shunting_yard::{evaluate_with_resolver, EvalError, Value, VariableResolver};
+
+struct RuntimeResolver;
+
+impl VariableResolver for RuntimeResolver {
+    fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+        match name {
+            "runtime_value" => Ok(Value::Integer(40)),
+            other => Err(EvalError::UnknownVariable(other.to_owned())),
+        }
+    }
+}
+
+assert_eq!(
+    evaluate_with_resolver("runtime_value + 2", RuntimeResolver),
+    Ok(Value::Integer(42))
+);
 ```
 
 Use `evaluate_with_options` or `evaluate_with_options_and_resolver` when a
