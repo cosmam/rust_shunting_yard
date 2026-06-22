@@ -6,6 +6,43 @@ Any constants have already been replaced with their numerical values. So, for in
 
 Whitespace has no effect.
 
+## Evaluation API
+
+The compatibility entrypoint evaluates an expression with variables supplied by
+a `HashMap<String, Value>`:
+
+```rust
+use shunting_yard::{evaluate, Value};
+use std::collections::HashMap;
+
+let mut variables = HashMap::new();
+variables.insert("base".to_owned(), Value::Integer(4));
+
+assert_eq!(
+    evaluate("base + 2 * 3", &variables),
+    Ok(Value::Integer(10))
+);
+```
+
+For variable sources that are not a map, use `evaluate_with` and provide any
+resolver callback that returns `Result<Value, EvalError>`:
+
+```rust
+use shunting_yard::{evaluate_with, EvalError, Value};
+
+let result = evaluate_with("runtime_value + 2", |name: &str| match name {
+    "runtime_value" => Ok(Value::Integer(40)),
+    other => Err(EvalError::UnknownVariable(other.to_owned())),
+});
+
+assert_eq!(result, Ok(Value::Integer(42)));
+```
+
+Use `evaluate_with_options` or `evaluate_with_options_and_resolver` when a
+caller needs explicit resource limits. All evaluation paths reject variable
+values and operation results that would produce NaN, infinity, or subnormal
+floating-point values.
+
 ## Tokens to Parse
 
 Broadly speaking, there are four categories of things to parse: numbers, operators, functions, and mistakes. Details are presented below
