@@ -10,12 +10,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         print!("Enter something: ");
         // Flush stdout so the prompt appears before reading
-        io::stdout().flush().expect("Failed to flush");
+        io::stdout().flush()?;
 
         // Read the line into the input string
-        io::stdin()
-            .read_line(&mut input)
-            .expect("Failed to read line");
+        io::stdin().read_line(&mut input)?;
 
         // Break the loop if the input is "exit" (trimming newline)
         if input.trim() == "exit" {

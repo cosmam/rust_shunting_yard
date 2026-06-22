@@ -13,11 +13,137 @@
 //! referenced variable is missing, or an operator is used with the wrong arity.
 
 use crate::ast::{Expression, Func, Opcode};
-use crate::{EvalError, Value};
+use crate::{ArithmeticOp, EvalError, Value};
 use roundable::{Roundable, Tie};
 use std::collections::HashMap;
+use std::num::FpCategory;
 
 const EPSILON: f64 = 0.000001;
+
+fn invalid_arity(expected: &'static str, actual: usize) -> EvalError {
+    EvalError::InvalidArity { expected, actual }
+}
+
+fn invalid_type(expected: &'static str, actual: &'static str) -> EvalError {
+    EvalError::InvalidType { expected, actual }
+}
+
+fn value_type(value: &Value) -> &'static str {
+    match value {
+        Value::Bool(_) => "bool",
+        Value::Integer(_) => "integer",
+        Value::Float(_) => "float",
+    }
+}
+
+fn checked_float(value: f64) -> Result<Value, EvalError> {
+    checked_f64(value).map(Value::Float)
+}
+
+fn checked_f64(value: f64) -> Result<f64, EvalError> {
+    match value.classify() {
+        FpCategory::Nan | FpCategory::Infinite => Err(EvalError::NonFiniteFloat),
+        FpCategory::Subnormal => Err(EvalError::SubnormalFloat),
+        FpCategory::Zero | FpCategory::Normal => Ok(value),
+    }
+}
+
+fn checked_add_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
+    lhs.checked_add(rhs)
+        .map(Value::Integer)
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Add,
+        })
+}
+
+fn checked_sub_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
+    lhs.checked_sub(rhs)
+        .map(Value::Integer)
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Subtract,
+        })
+}
+
+fn checked_mul_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
+    lhs.checked_mul(rhs)
+        .map(Value::Integer)
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Multiply,
+        })
+}
+
+fn checked_neg_i64(value: i64) -> Result<Value, EvalError> {
+    value
+        .checked_neg()
+        .map(Value::Integer)
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Negate,
+        })
+}
+
+fn checked_div_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
+    if rhs == 0 {
+        return Err(EvalError::DivisionByZero);
+    }
+
+    lhs.checked_div(rhs)
+        .map(Value::Integer)
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Divide,
+        })
+}
+
+fn checked_rem_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
+    if rhs == 0 {
+        return Err(EvalError::DivisionByZero);
+    }
+
+    lhs.checked_rem(rhs)
+        .map(Value::Integer)
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Modulo,
+        })
+}
+
+fn checked_rem_euclid_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
+    if rhs == 0 {
+        return Err(EvalError::DivisionByZero);
+    }
+
+    lhs.checked_rem_euclid(rhs)
+        .map(Value::Integer)
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Remainder,
+        })
+}
+
+fn checked_shift_count(count: i64) -> Result<u32, EvalError> {
+    let count_u32 = u32::try_from(count).map_err(|_| EvalError::InvalidShiftCount { count })?;
+
+    if count_u32 >= i64::BITS {
+        return Err(EvalError::InvalidShiftCount { count });
+    }
+
+    Ok(count_u32)
+}
+
+fn checked_shl_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
+    let shift = checked_shift_count(rhs)?;
+    lhs.checked_shl(shift)
+        .map(Value::Integer)
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::ShiftLeft,
+        })
+}
+
+fn checked_shr_i64(lhs: i64, rhs: i64) -> Result<Value, EvalError> {
+    let shift = checked_shift_count(rhs)?;
+    lhs.checked_shr(shift)
+        .map(Value::Integer)
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::ShiftRight,
+        })
+}
 
 /// Evaluate an expression into a runtime value.
 ///
@@ -41,7 +167,7 @@ pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Val
     match expr {
         Expression::Bool(n) => Ok(Value::Bool(*n)),
         Expression::Integer(n) => Ok(Value::Integer(*n)),
-        Expression::Float(n) => Ok(Value::Float(*n)),
+        Expression::Float(n) => checked_float(*n),
 
         Expression::UnaryOperation { operator, value } => {
             let value = eval(value, variables)?;
@@ -65,13 +191,21 @@ pub fn eval(expr: &Expression, variables: &HashMap<String, Value>) -> Result<Val
 
         Expression::Variable(name) => {
             if let Some(value) = variables.get(*name) {
-                Ok(value.clone())
+                validate_value(value)
             } else {
                 Err(EvalError::UnknownVariable(name.to_string()))
             }
         }
 
         Expression::Error | Expression::LexicalError(_) => Err(EvalError::InvalidExpression),
+    }
+}
+
+fn validate_value(value: &Value) -> Result<Value, EvalError> {
+    match value {
+        Value::Bool(value) => Ok(Value::Bool(*value)),
+        Value::Integer(value) => Ok(Value::Integer(*value)),
+        Value::Float(value) => checked_float(*value),
     }
 }
 
@@ -108,7 +242,7 @@ fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
         | Opcode::BitwiseOr
         | Opcode::BitwiseXor
         | Opcode::LogicalAnd
-        | Opcode::LogicalOr => Err(EvalError::InvalidArity),
+        | Opcode::LogicalOr => Err(invalid_arity("unary operator", 1)),
     }
 }
 
@@ -126,14 +260,13 @@ fn apply_unary(op: &Opcode, val: Value) -> Result<Value, EvalError> {
 /// [`apply_unary`], which only routes unary math opcodes here.
 fn apply_unary_math(op: &Opcode, val: Value) -> Result<Value, EvalError> {
     match (op, val) {
-        (_, Value::Bool(_)) => Err(EvalError::InvalidType(
-            "Unary math operations not defined for bool".to_string(),
-        )),
+        (_, Value::Bool(_)) => Err(invalid_type("integer or float", "bool")),
+        (Opcode::Plus, Value::Float(f)) => checked_float(f),
         (Opcode::Plus, value) => Ok(value),
-        (Opcode::Minus, Value::Integer(i)) => Ok(Value::Integer(-i)),
-        (Opcode::Minus, Value::Float(f)) => Ok(Value::Float(-f)),
-        (Opcode::Degrees, Value::Integer(i)) => Ok(Value::Float((i as f64).to_radians())),
-        (Opcode::Degrees, Value::Float(f)) => Ok(Value::Float(f.to_radians())),
+        (Opcode::Minus, Value::Integer(i)) => checked_neg_i64(i),
+        (Opcode::Minus, Value::Float(f)) => checked_float(-f),
+        (Opcode::Degrees, Value::Integer(i)) => checked_float((i as f64).to_radians()),
+        (Opcode::Degrees, Value::Float(f)) => checked_float(f.to_radians()),
         (_, _) => Err(EvalError::UnexpectedOpcode),
     }
 }
@@ -152,9 +285,7 @@ fn apply_bitwise_not(val: Value) -> Result<Value, EvalError> {
         Value::Bool(v) => Ok(Value::Bool(!v)),
         // the '!' operator in rust for ints represents bitwise negation
         Value::Integer(i) => Ok(Value::Integer(!i)),
-        Value::Float(_) => Err(EvalError::InvalidType(
-            "Bitwise operations not defined for floats".to_string(),
-        )),
+        Value::Float(_) => Err(invalid_type("bool or integer", "float")),
     }
 }
 
@@ -168,9 +299,9 @@ fn apply_bitwise_not(val: Value) -> Result<Value, EvalError> {
 fn apply_logical_not(val: Value) -> Result<Value, EvalError> {
     match val {
         Value::Bool(v) => Ok(Value::Bool(!v)),
-        Value::Integer(_) | Value::Float(_) => Err(EvalError::InvalidType(
-            "Logical operations must be bools".to_string(),
-        )),
+        value @ (Value::Integer(_) | Value::Float(_)) => {
+            Err(invalid_type("bool", value_type(&value)))
+        }
     }
 }
 
@@ -205,7 +336,9 @@ fn apply_binary(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError>
         }
         Opcode::BitshiftLeft | Opcode::BitshiftRight => apply_bitshift_operation(op, lhs, rhs),
         Opcode::LogicalAnd | Opcode::LogicalOr => apply_binary_logical_operation(op, lhs, rhs),
-        Opcode::Degrees | Opcode::BitwiseNot | Opcode::LogicalNot => Err(EvalError::InvalidArity),
+        Opcode::Degrees | Opcode::BitwiseNot | Opcode::LogicalNot => {
+            Err(invalid_arity("binary operator", 2))
+        }
     }
 }
 
@@ -296,11 +429,10 @@ fn apply_binary_comparison(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value,
             Ok(Value::Bool(l <= r))
         }
         (Opcode::ApproximatelyEquals, Value::Float(l), Value::Float(r)) => {
-            Ok(Value::Bool((l - r).abs() <= (l.max(r) * EPSILON)))
+            let scale = l.abs().max(r.abs()).max(1.0);
+            Ok(Value::Bool((l - r).abs() <= EPSILON * scale))
         }
-        _ => Err(EvalError::InvalidType(
-            "Cannot mix types for binary comparison".to_string(),
-        )),
+        _ => Err(invalid_type("matching comparable types", "mixed types")),
     }
 }
 
@@ -328,11 +460,11 @@ fn convert_binary_values(op: &Opcode, lhs: Value, rhs: Value) -> (&Opcode, Value
 /// Returns [`EvalError::UnexpectedOpcode`] for non-arithmetic operators.
 /// That branch is unreachable through [`apply_binary`], which only routes
 /// arithmetic opcodes here. Returns [`EvalError::InvalidType`] for boolean
-/// operands. Returns [`EvalError::MathError`] for integer power overflow,
-/// integer exponent conversion failure, division by zero, or modulo by zero.
+/// operands. Arithmetic failures are returned as typed errors such as
+/// [`EvalError::DivisionByZero`], [`EvalError::IntegerOverflow`],
+/// [`EvalError::InvalidExponent`], [`EvalError::NonFiniteFloat`], or
+/// [`EvalError::SubnormalFloat`].
 fn apply_binary_math_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
-    // Most arithmetic currently follows Rust's primitive operators; integer power is the
-    // only checked overflow case here.
     match convert_binary_values(op, lhs, rhs) {
         (Opcode::Equals, _, _)
         | (Opcode::NotEquals, _, _)
@@ -352,34 +484,26 @@ fn apply_binary_math_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Va
         | (Opcode::BitwiseXor, _, _)
         | (Opcode::Degrees, _, _) => Err(EvalError::UnexpectedOpcode),
         (Opcode::Power, Value::Integer(l), Value::Integer(r)) => checked_integer_power(l, r),
-        (Opcode::Divide, Value::Integer(l), Value::Integer(r)) => match r {
-            0 => Err(EvalError::MathError("Division by zero".to_string())),
-            _ => Ok(Value::Integer(l / r)),
-        },
-        (Opcode::Modulo, Value::Integer(l), Value::Integer(r)) => match r {
-            0 => Err(EvalError::MathError("Modulo by zero".to_string())),
-            _ => Ok(Value::Integer(l % r)),
-        },
-        (Opcode::Multiply, Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l * r)),
-        (Opcode::Plus, Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l + r)),
-        (Opcode::Minus, Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l - r)),
-        (Opcode::Power, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.powf(r))),
+        (Opcode::Divide, Value::Integer(l), Value::Integer(r)) => checked_div_i64(l, r),
+        (Opcode::Modulo, Value::Integer(l), Value::Integer(r)) => checked_rem_i64(l, r),
+        (Opcode::Multiply, Value::Integer(l), Value::Integer(r)) => checked_mul_i64(l, r),
+        (Opcode::Plus, Value::Integer(l), Value::Integer(r)) => checked_add_i64(l, r),
+        (Opcode::Minus, Value::Integer(l), Value::Integer(r)) => checked_sub_i64(l, r),
+        (Opcode::Power, Value::Float(l), Value::Float(r)) => checked_float(l.powf(r)),
         (Opcode::Divide, Value::Float(l), Value::Float(r)) => match r {
-            0.0 => Err(EvalError::MathError("Division by zero".to_string())),
-            _ => Ok(Value::Float(l / r)),
+            0.0 => Err(EvalError::DivisionByZero),
+            _ => checked_float(l / r),
         },
         (Opcode::Modulo, Value::Float(l), Value::Float(r)) => match r {
-            0.0 => Err(EvalError::MathError("Modulo by zero".to_string())),
-            _ => Ok(Value::Float(l % r)),
+            0.0 => Err(EvalError::DivisionByZero),
+            _ => checked_float(l % r),
         },
-        (Opcode::Multiply, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l * r)),
-        (Opcode::Plus, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l + r)),
-        (Opcode::Minus, Value::Float(l), Value::Float(r)) => Ok(Value::Float(l - r)),
+        (Opcode::Multiply, Value::Float(l), Value::Float(r)) => checked_float(l * r),
+        (Opcode::Plus, Value::Float(l), Value::Float(r)) => checked_float(l + r),
+        (Opcode::Minus, Value::Float(l), Value::Float(r)) => checked_float(l - r),
         // we already ensured there's no mixture of int and float, and handled other operators,
         // so the only other option is that one of the values is a bool
-        _ => Err(EvalError::InvalidType(
-            "Bools not supported for binary math".to_string(),
-        )),
+        _ => Err(invalid_type("integer or float", "bool")),
     }
 }
 
@@ -418,9 +542,9 @@ fn apply_binary_bit_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Val
         | (Opcode::LogicalNot, _, _)
         | (Opcode::BitwiseNot, _, _)
         | (Opcode::Degrees, _, _) => Err(EvalError::UnexpectedOpcode),
-        (_, Value::Float(_), _) | (_, _, Value::Float(_)) => Err(EvalError::InvalidType(
-            "Bitwise operations on floats not supported".to_string(),
-        )),
+        (_, Value::Float(_), _) | (_, _, Value::Float(_)) => {
+            Err(invalid_type("bool or integer", "float"))
+        }
         (Opcode::BitwiseAnd, Value::Bool(b_lhs), Value::Bool(b_rhs)) => {
             Ok(Value::Bool(b_lhs & b_rhs))
         }
@@ -440,7 +564,7 @@ fn apply_binary_bit_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Val
             Ok(Value::Integer(i_lhs ^ i_rhs))
         }
         (Opcode::BitwiseAnd, _, _) | (Opcode::BitwiseOr, _, _) | (Opcode::BitwiseXor, _, _) => Err(
-            EvalError::InvalidType("Cannot mix types for bitwise operations".to_string()),
+            invalid_type("matching bool or integer types", "mixed types"),
         ),
     }
 }
@@ -459,14 +583,12 @@ fn apply_binary_bit_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Val
 fn apply_bitshift_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     if let (Value::Integer(l), Value::Integer(r)) = (lhs, rhs) {
         match op {
-            Opcode::BitshiftLeft => Ok(Value::Integer(l << r)),
-            Opcode::BitshiftRight => Ok(Value::Integer(l >> r)),
+            Opcode::BitshiftLeft => checked_shl_i64(l, r),
+            Opcode::BitshiftRight => checked_shr_i64(l, r),
             _ => Err(EvalError::UnexpectedOpcode),
         }
     } else {
-        Err(EvalError::InvalidType(
-            "Logical operations must operate on bools".to_string(),
-        ))
+        Err(invalid_type("integer", "non-integer"))
     }
 }
 
@@ -488,9 +610,7 @@ fn apply_binary_logical_operation(op: &Opcode, lhs: Value, rhs: Value) -> Result
             _ => Err(EvalError::UnexpectedOpcode),
         }
     } else {
-        Err(EvalError::InvalidType(
-            "Logical operations must operate on bools".to_string(),
-        ))
+        Err(invalid_type("bool", "non-bool"))
     }
 }
 
@@ -572,9 +692,7 @@ fn apply_n_nary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalErr
 /// Returns [`EvalError::InvalidType`] when any argument is a boolean.
 fn pare_vector_n_nary(vals: Vec<Value>) -> Result<Vec<Value>, EvalError> {
     if vals.iter().any(|value| matches!(value, Value::Bool(_))) {
-        return Err(EvalError::InvalidType(
-            "N-nary functions not defined for bool".to_string(),
-        ));
+        return Err(invalid_type("integer or float", "bool"));
     }
 
     if vals.iter().any(|value| matches!(value, Value::Float(_))) {
@@ -604,7 +722,7 @@ fn pare_vector_n_nary(vals: Vec<Value>) -> Result<Vec<Value>, EvalError> {
 /// without first calling [`pare_vector_n_nary`].
 fn apply_min_function(vals: Vec<Value>) -> Result<Value, EvalError> {
     match vals.as_slice() {
-        [] => Err(EvalError::InvalidArity),
+        [] => Err(invalid_arity("at least 1", 0)),
         [Value::Integer(_), ..] => {
             let mut min = None;
             for value in vals {
@@ -615,13 +733,12 @@ fn apply_min_function(vals: Vec<Value>) -> Result<Value, EvalError> {
                     // apply_n_nary_function calls pare_vector_n_nary first, so this
                     // branch is only reachable if apply_min_function is called directly.
                     Value::Bool(_) | Value::Float(_) => {
-                        return Err(EvalError::InvalidType(
-                            "Min expected all integer values".to_string(),
-                        ));
+                        return Err(invalid_type("integer", value_type(&value)));
                     }
                 }
             }
-            min.map(Value::Integer).ok_or(EvalError::InvalidArity)
+            min.map(Value::Integer)
+                .ok_or(invalid_arity("at least 1", 0))
         }
         [Value::Float(_), ..] => {
             let mut min = None;
@@ -631,17 +748,14 @@ fn apply_min_function(vals: Vec<Value>) -> Result<Value, EvalError> {
                     // apply_n_nary_function calls pare_vector_n_nary first, so this
                     // branch is only reachable if apply_min_function is called directly.
                     Value::Bool(_) | Value::Integer(_) => {
-                        return Err(EvalError::InvalidType(
-                            "Min expected all float values".to_string(),
-                        ));
+                        return Err(invalid_type("float", value_type(&value)));
                     }
                 }
             }
-            min.map(Value::Float).ok_or(EvalError::InvalidArity)
+            min.map(checked_float)
+                .unwrap_or_else(|| Err(invalid_arity("at least 1", 0)))
         }
-        [Value::Bool(_), ..] => Err(EvalError::InvalidType(
-            "N-nary functions not defined for bool".to_string(),
-        )),
+        [Value::Bool(_), ..] => Err(invalid_type("integer or float", "bool")),
     }
 }
 
@@ -659,7 +773,7 @@ fn apply_min_function(vals: Vec<Value>) -> Result<Value, EvalError> {
 /// without first calling [`pare_vector_n_nary`].
 fn apply_max_function(vals: Vec<Value>) -> Result<Value, EvalError> {
     match vals.as_slice() {
-        [] => Err(EvalError::InvalidArity),
+        [] => Err(invalid_arity("at least 1", 0)),
         [Value::Integer(_), ..] => {
             let mut max = None;
             for value in vals {
@@ -670,13 +784,12 @@ fn apply_max_function(vals: Vec<Value>) -> Result<Value, EvalError> {
                     // apply_n_nary_function calls pare_vector_n_nary first, so this
                     // branch is only reachable if apply_max_function is called directly.
                     Value::Bool(_) | Value::Float(_) => {
-                        return Err(EvalError::InvalidType(
-                            "Max expected all integer values".to_string(),
-                        ));
+                        return Err(invalid_type("integer", value_type(&value)));
                     }
                 }
             }
-            max.map(Value::Integer).ok_or(EvalError::InvalidArity)
+            max.map(Value::Integer)
+                .ok_or(invalid_arity("at least 1", 0))
         }
         [Value::Float(_), ..] => {
             let mut max = None;
@@ -686,17 +799,14 @@ fn apply_max_function(vals: Vec<Value>) -> Result<Value, EvalError> {
                     // apply_n_nary_function calls pare_vector_n_nary first, so this
                     // branch is only reachable if apply_max_function is called directly.
                     Value::Bool(_) | Value::Integer(_) => {
-                        return Err(EvalError::InvalidType(
-                            "Max expected all float values".to_string(),
-                        ));
+                        return Err(invalid_type("float", value_type(&value)));
                     }
                 }
             }
-            max.map(Value::Float).ok_or(EvalError::InvalidArity)
+            max.map(checked_float)
+                .unwrap_or_else(|| Err(invalid_arity("at least 1", 0)))
         }
-        [Value::Bool(_), ..] => Err(EvalError::InvalidType(
-            "N-nary functions not defined for bool".to_string(),
-        )),
+        [Value::Bool(_), ..] => Err(invalid_type("integer or float", "bool")),
     }
 }
 
@@ -746,12 +856,12 @@ fn apply_rounding_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalE
 /// [`EvalError::InvalidArity`] when the argument count is not one or two.
 fn pare_vector_rounding(vals: Vec<Value>) -> Result<(Value, Option<Value>), EvalError> {
     match vals.as_slice() {
-        [Value::Bool(_)] | [Value::Bool(_), _] | [_, Value::Bool(_)] => Err(
-            EvalError::InvalidType("Rounding functions not defined for bool".to_string()),
-        ),
+        [Value::Bool(_)] | [Value::Bool(_), _] | [_, Value::Bool(_)] => {
+            Err(invalid_type("integer or float", "bool"))
+        }
         [value] => Ok((value.clone(), None)),
         [value, precision] => Ok((value.clone(), Some(precision.clone()))),
-        _ => Err(EvalError::InvalidArity),
+        _ => Err(invalid_arity("1 or 2", vals.len())),
     }
 }
 
@@ -763,28 +873,26 @@ fn pare_vector_rounding(vals: Vec<Value>) -> Result<(Value, Option<Value>), Eval
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::InvalidType`] for boolean inputs. Returns
-/// [`EvalError::MathError`] for non-positive precision or overflow from the
-/// numeric rounding helper.
+/// Returns [`EvalError::InvalidType`] for boolean inputs,
+/// [`EvalError::InvalidPrecision`] for non-positive precision, or typed
+/// overflow/non-finite errors from the numeric rounding helper.
 fn apply_round_function(value: Value, precision: Option<Value>) -> Result<Value, EvalError> {
     match (value, precision) {
         (Value::Integer(value), None) => round_i64(value, 1).map(Value::Integer),
-        (Value::Float(value), None) => round_f64(value, 1.0).map(Value::Float),
+        (Value::Float(value), None) => round_f64(value, 1.0).and_then(checked_float),
         (Value::Integer(value), Some(Value::Integer(precision))) => {
             round_i64(value, precision).map(Value::Integer)
         }
         (Value::Integer(value), Some(Value::Float(precision))) => {
-            round_f64(value as f64, precision).map(Value::Float)
+            round_f64(value as f64, precision).and_then(checked_float)
         }
         (Value::Float(value), Some(Value::Integer(precision))) => {
             round_f64_to_i64(value, precision).map(Value::Integer)
         }
         (Value::Float(value), Some(Value::Float(precision))) => {
-            round_f64(value, precision).map(Value::Float)
+            round_f64(value, precision).and_then(checked_float)
         }
-        _ => Err(EvalError::InvalidType(
-            "Bools not valid for round functions".to_string(),
-        )),
+        _ => Err(invalid_type("integer or float", "bool")),
     }
 }
 
@@ -794,18 +902,18 @@ fn apply_round_function(value: Value, precision: Option<Value>) -> Result<Value,
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::MathError`] when precision is non-positive or the
-/// rounded integer would overflow.
+/// Returns [`EvalError::InvalidPrecision`] when precision is non-positive or
+/// [`EvalError::IntegerOverflow`] when the rounded integer would overflow.
 fn round_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
     if precision <= 0 {
-        return Err(EvalError::MathError(
-            "Round precision must be positive".to_string(),
-        ));
+        return Err(EvalError::InvalidPrecision);
     }
 
     value
         .try_round_to(precision, Tie::Up)
-        .ok_or_else(|| EvalError::MathError("Integer overflow on round".to_string()))
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Round,
+        })
 }
 
 /// Round a float to the nearest positive floating-point precision.
@@ -814,44 +922,41 @@ fn round_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::MathError`] when precision is non-positive or the
-/// rounding operation cannot produce a finite float.
+/// Returns [`EvalError::InvalidPrecision`] when precision is non-positive or
+/// [`EvalError::NonFiniteFloat`] when the operation cannot produce a finite
+/// float, or [`EvalError::SubnormalFloat`] for subnormal results.
 fn round_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
     if precision <= 0.0 {
-        return Err(EvalError::MathError(
-            "Round precision must be positive".to_string(),
-        ));
+        return Err(EvalError::InvalidPrecision);
     }
 
     let rounded = value.try_round_to(precision, Tie::Up).unwrap_or(f64::NAN);
 
-    if rounded.is_finite() {
-        Ok(rounded)
-    } else {
-        Err(EvalError::MathError("Float overflow on round".to_string()))
-    }
+    checked_f64(rounded)
 }
 
 /// Round a float and convert the result to an integer.
 ///
 /// # Errors
 ///
-/// Returns errors from [`round_f64`]. Returns [`EvalError::MathError`] if the
-/// rounded value falls outside the `i64` range.
+/// Returns errors from [`round_f64`]. Returns [`EvalError::IntegerOverflow`] if
+/// the rounded value falls outside the `i64` range.
 fn round_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
     let rounded = round_f64(value, precision as f64)?;
 
     checked_f64_to_i64(rounded, "round")
 }
 
-fn checked_f64_to_i64(value: f64, operation: &str) -> Result<i64, EvalError> {
+fn checked_f64_to_i64(value: f64, _operation: &str) -> Result<i64, EvalError> {
     const I64_MIN_AS_F64: f64 = i64::MIN as f64;
     const I64_MAX_EXCLUSIVE_AS_F64: f64 = -(i64::MIN as f64);
 
+    checked_f64(value)?;
+
     if !(I64_MIN_AS_F64..I64_MAX_EXCLUSIVE_AS_F64).contains(&value) {
-        return Err(EvalError::MathError(format!(
-            "Integer overflow on {operation}"
-        )));
+        return Err(EvalError::IntegerOverflow {
+            op: ArithmeticOp::FloatToInteger,
+        });
     }
 
     Ok(value as i64)
@@ -865,28 +970,26 @@ fn checked_f64_to_i64(value: f64, operation: &str) -> Result<i64, EvalError> {
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::InvalidType`] for boolean inputs. Returns
-/// [`EvalError::MathError`] for non-positive precision or overflow from the
-/// numeric floor helper.
+/// Returns [`EvalError::InvalidType`] for boolean inputs,
+/// [`EvalError::InvalidPrecision`] for non-positive precision, or typed
+/// overflow/non-finite errors from the numeric floor helper.
 fn apply_floor_function(value: Value, precision: Option<Value>) -> Result<Value, EvalError> {
     match (value, precision) {
         (Value::Integer(value), None) => floor_i64(value, 1).map(Value::Integer),
-        (Value::Float(value), None) => floor_f64(value, 1.0).map(Value::Float),
+        (Value::Float(value), None) => floor_f64(value, 1.0).and_then(checked_float),
         (Value::Integer(value), Some(Value::Integer(precision))) => {
             floor_i64(value, precision).map(Value::Integer)
         }
         (Value::Integer(value), Some(Value::Float(precision))) => {
-            floor_f64(value as f64, precision).map(Value::Float)
+            floor_f64(value as f64, precision).and_then(checked_float)
         }
         (Value::Float(value), Some(Value::Integer(precision))) => {
             floor_f64_to_i64(value, precision).map(Value::Integer)
         }
         (Value::Float(value), Some(Value::Float(precision))) => {
-            floor_f64(value, precision).map(Value::Float)
+            floor_f64(value, precision).and_then(checked_float)
         }
-        _ => Err(EvalError::InvalidType(
-            "Bools not valid for floor functions".to_string(),
-        )),
+        _ => Err(invalid_type("integer or float", "bool")),
     }
 }
 
@@ -897,48 +1000,44 @@ fn apply_floor_function(value: Value, precision: Option<Value>) -> Result<Value,
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::MathError`] when precision is non-positive or the
-/// resulting integer multiple would overflow.
+/// Returns [`EvalError::InvalidPrecision`] when precision is non-positive or
+/// [`EvalError::IntegerOverflow`] when the resulting integer multiple would
+/// overflow.
 fn floor_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
     if precision <= 0 {
-        return Err(EvalError::MathError(
-            "Floor precision must be positive".to_string(),
-        ));
+        return Err(EvalError::InvalidPrecision);
     }
 
     value
         .div_euclid(precision)
         .checked_mul(precision)
-        .ok_or_else(|| EvalError::MathError("Integer overflow on floor".to_string()))
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Floor,
+        })
 }
 
 /// Floor a float to a positive floating-point precision.
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::MathError`] when precision is non-positive or the
-/// computed floor is not finite.
+/// Returns [`EvalError::InvalidPrecision`] when precision is non-positive or
+/// [`EvalError::NonFiniteFloat`] when the computed floor is not finite, or
+/// [`EvalError::SubnormalFloat`] for subnormal results.
 fn floor_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
     if precision <= 0.0 {
-        return Err(EvalError::MathError(
-            "Floor precision must be positive".to_string(),
-        ));
+        return Err(EvalError::InvalidPrecision);
     }
 
     let result = (value / precision).floor() * precision;
-    if result.is_finite() {
-        Ok(result)
-    } else {
-        Err(EvalError::MathError("Float overflow on floor".to_string()))
-    }
+    checked_f64(result)
 }
 
 /// Floor a float and convert the result to an integer.
 ///
 /// # Errors
 ///
-/// Returns errors from [`floor_f64`]. Returns [`EvalError::MathError`] if the
-/// floored value falls outside the `i64` range.
+/// Returns errors from [`floor_f64`]. Returns [`EvalError::IntegerOverflow`] if
+/// the floored value falls outside the `i64` range.
 fn floor_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
     let floored = floor_f64(value, precision as f64)?;
 
@@ -953,28 +1052,26 @@ fn floor_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::InvalidType`] for boolean inputs. Returns
-/// [`EvalError::MathError`] for non-positive precision or overflow from the
-/// numeric ceiling helper.
+/// Returns [`EvalError::InvalidType`] for boolean inputs,
+/// [`EvalError::InvalidPrecision`] for non-positive precision, or typed
+/// overflow/non-finite errors from the numeric ceiling helper.
 fn apply_ceiling_function(value: Value, precision: Option<Value>) -> Result<Value, EvalError> {
     match (value, precision) {
         (Value::Integer(value), None) => ceiling_i64(value, 1).map(Value::Integer),
-        (Value::Float(value), None) => ceiling_f64(value, 1.0).map(Value::Float),
+        (Value::Float(value), None) => ceiling_f64(value, 1.0).and_then(checked_float),
         (Value::Integer(value), Some(Value::Integer(precision))) => {
             ceiling_i64(value, precision).map(Value::Integer)
         }
         (Value::Integer(value), Some(Value::Float(precision))) => {
-            ceiling_f64(value as f64, precision).map(Value::Float)
+            ceiling_f64(value as f64, precision).and_then(checked_float)
         }
         (Value::Float(value), Some(Value::Integer(precision))) => {
             ceiling_f64_to_i64(value, precision).map(Value::Integer)
         }
         (Value::Float(value), Some(Value::Float(precision))) => {
-            ceiling_f64(value, precision).map(Value::Float)
+            ceiling_f64(value, precision).and_then(checked_float)
         }
-        _ => Err(EvalError::InvalidType(
-            "Bools not valid for ceiling functions".to_string(),
-        )),
+        _ => Err(invalid_type("integer or float", "bool")),
     }
 }
 
@@ -982,13 +1079,12 @@ fn apply_ceiling_function(value: Value, precision: Option<Value>) -> Result<Valu
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::MathError`] when precision is non-positive or adding the
-/// precision to the floored base would overflow.
+/// Returns [`EvalError::InvalidPrecision`] when precision is non-positive or
+/// [`EvalError::IntegerOverflow`] when adding the precision to the floored base
+/// would overflow.
 fn ceiling_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
     if precision <= 0 {
-        return Err(EvalError::MathError(
-            "Ceiling precision must be positive".to_string(),
-        ));
+        return Err(EvalError::InvalidPrecision);
     }
 
     let base = floor_i64(value, precision)?;
@@ -996,7 +1092,9 @@ fn ceiling_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
         Ok(base)
     } else {
         base.checked_add(precision)
-            .ok_or_else(|| EvalError::MathError("Integer overflow on ceiling".to_string()))
+            .ok_or(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Ceiling,
+            })
     }
 }
 
@@ -1004,31 +1102,24 @@ fn ceiling_i64(value: i64, precision: i64) -> Result<i64, EvalError> {
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::MathError`] when precision is non-positive or the
-/// computed ceiling is not finite.
+/// Returns [`EvalError::InvalidPrecision`] when precision is non-positive or
+/// [`EvalError::NonFiniteFloat`] when the computed ceiling is not finite, or
+/// [`EvalError::SubnormalFloat`] for subnormal results.
 fn ceiling_f64(value: f64, precision: f64) -> Result<f64, EvalError> {
     if precision <= 0.0 {
-        return Err(EvalError::MathError(
-            "Ceiling precision must be positive".to_string(),
-        ));
+        return Err(EvalError::InvalidPrecision);
     }
 
     let result = (value / precision).ceil() * precision;
-    if result.is_finite() {
-        Ok(result)
-    } else {
-        Err(EvalError::MathError(
-            "Float overflow on ceiling".to_string(),
-        ))
-    }
+    checked_f64(result)
 }
 
 /// Ceiling a float and convert the result to an integer.
 ///
 /// # Errors
 ///
-/// Returns errors from [`ceiling_f64`]. Returns [`EvalError::MathError`] if the
-/// ceiling value falls outside the `i64` range.
+/// Returns errors from [`ceiling_f64`]. Returns [`EvalError::IntegerOverflow`]
+/// if the ceiling value falls outside the `i64` range.
 fn ceiling_f64_to_i64(value: f64, precision: i64) -> Result<i64, EvalError> {
     let ceiling = ceiling_f64(value, precision as f64)?;
 
@@ -1078,12 +1169,11 @@ fn apply_binary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalErr
 /// Returns [`EvalError::InvalidArity`] unless exactly two arguments are supplied.
 /// Returns [`EvalError::InvalidType`] when either argument is a boolean.
 fn pare_vector_binary(vals: Vec<Value>) -> Result<(Value, Value), EvalError> {
-    let [lhs, rhs]: [Value; 2] = vals.try_into().map_err(|_| EvalError::InvalidArity)?;
+    let actual = vals.len();
+    let [lhs, rhs]: [Value; 2] = vals.try_into().map_err(|_| invalid_arity("2", actual))?;
 
     if matches!(lhs, Value::Bool(_)) || matches!(rhs, Value::Bool(_)) {
-        Err(EvalError::InvalidType(
-            "Binary functions not defined for bool".to_string(),
-        ))
+        Err(invalid_type("integer or float", "bool"))
     } else {
         Ok((lhs, rhs))
     }
@@ -1096,29 +1186,30 @@ fn pare_vector_binary(vals: Vec<Value>) -> Result<(Value, Value), EvalError> {
 ///
 /// # Errors
 ///
-/// Returns [`EvalError::InvalidType`] for boolean inputs. Returns
-/// [`EvalError::MathError`] when an integer exponent cannot convert to `u32` or
-/// checked integer exponentiation overflows.
+/// Returns [`EvalError::InvalidType`] for boolean inputs,
+/// [`EvalError::InvalidExponent`] when an integer exponent cannot convert to
+/// `u32`, or [`EvalError::IntegerOverflow`] when checked integer
+/// exponentiation overflows.
 fn apply_power_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     match (lhs, rhs) {
         (Value::Integer(l), Value::Integer(r)) => checked_integer_power(l, r),
-        (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64).powf(r))),
-        (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l.powf(r as f64))),
-        (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.powf(r))),
-        _ => Err(EvalError::InvalidType(
-            "Bools not valid for power functions".to_string(),
-        )),
+        (Value::Integer(l), Value::Float(r)) => checked_float((l as f64).powf(r)),
+        (Value::Float(l), Value::Integer(r)) => checked_float(l.powf(r as f64)),
+        (Value::Float(l), Value::Float(r)) => checked_float(l.powf(r)),
+        _ => Err(invalid_type("integer or float", "bool")),
     }
 }
 
 fn checked_integer_power(base: i64, exponent: i64) -> Result<Value, EvalError> {
     let exponent: u32 = exponent
         .try_into()
-        .map_err(|_| EvalError::MathError("Integer exponent too large".to_string()))?;
+        .map_err(|_| EvalError::InvalidExponent { exponent })?;
 
     base.checked_pow(exponent)
         .map(Value::Integer)
-        .ok_or_else(|| EvalError::MathError("Integer overflow on power".to_string()))
+        .ok_or(EvalError::IntegerOverflow {
+            op: ArithmeticOp::Power,
+        })
 }
 
 /// Apply Rust remainder (`%`) semantics to two numeric values.
@@ -1130,13 +1221,15 @@ fn checked_integer_power(base: i64, exponent: i64) -> Result<Value, EvalError> {
 /// Returns [`EvalError::InvalidType`] for boolean inputs.
 fn apply_modulo_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     match (lhs, rhs) {
-        (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l % r)),
-        (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64) % r)),
-        (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l % (r as f64))),
-        (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l % r)),
-        _ => Err(EvalError::InvalidType(
-            "Bools not valid for modulo functions".to_string(),
-        )),
+        (Value::Integer(l), Value::Integer(r)) => checked_rem_i64(l, r),
+        (Value::Integer(_), Value::Float(0.0)) | (Value::Float(_), Value::Float(0.0)) => {
+            Err(EvalError::DivisionByZero)
+        }
+        (Value::Float(_), Value::Integer(0)) => Err(EvalError::DivisionByZero),
+        (Value::Integer(l), Value::Float(r)) => checked_float((l as f64) % r),
+        (Value::Float(l), Value::Integer(r)) => checked_float(l % (r as f64)),
+        (Value::Float(l), Value::Float(r)) => checked_float(l % r),
+        _ => Err(invalid_type("integer or float", "bool")),
     }
 }
 
@@ -1149,13 +1242,15 @@ fn apply_modulo_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
 /// Returns [`EvalError::InvalidType`] for boolean inputs.
 fn apply_remainder_function(lhs: Value, rhs: Value) -> Result<Value, EvalError> {
     match (lhs, rhs) {
-        (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l.rem_euclid(r))),
-        (Value::Integer(l), Value::Float(r)) => Ok(Value::Float((l as f64).rem_euclid(r))),
-        (Value::Float(l), Value::Integer(r)) => Ok(Value::Float(l.rem_euclid(r as f64))),
-        (Value::Float(l), Value::Float(r)) => Ok(Value::Float(l.rem_euclid(r))),
-        _ => Err(EvalError::InvalidType(
-            "Bools not valid for power functions".to_string(),
-        )),
+        (Value::Integer(l), Value::Integer(r)) => checked_rem_euclid_i64(l, r),
+        (Value::Integer(_), Value::Float(0.0)) | (Value::Float(_), Value::Float(0.0)) => {
+            Err(EvalError::DivisionByZero)
+        }
+        (Value::Float(_), Value::Integer(0)) => Err(EvalError::DivisionByZero),
+        (Value::Integer(l), Value::Float(r)) => checked_float((l as f64).rem_euclid(r)),
+        (Value::Float(l), Value::Integer(r)) => checked_float(l.rem_euclid(r as f64)),
+        (Value::Float(l), Value::Float(r)) => checked_float(l.rem_euclid(r)),
+        _ => Err(invalid_type("integer or float", "bool")),
     }
 }
 
@@ -1205,14 +1300,13 @@ fn apply_unary_function(func: &Func, vals: Vec<Value>) -> Result<Value, EvalErro
 /// Returns [`EvalError::InvalidArity`] unless exactly one argument is supplied.
 /// Returns [`EvalError::InvalidType`] when the argument is a boolean.
 fn pare_vector_unary(vals: Vec<Value>) -> Result<Value, EvalError> {
-    let [value]: [Value; 1] = vals.try_into().map_err(|_| EvalError::InvalidArity)?;
+    let actual = vals.len();
+    let [value]: [Value; 1] = vals.try_into().map_err(|_| invalid_arity("1", actual))?;
 
     match value {
-        Value::Bool(_) => Err(EvalError::InvalidType(
-            "Unary functions not defined for bool".to_string(),
-        )),
-        Value::Integer(value) => Ok(Value::Float(value as f64)),
-        Value::Float(value) => Ok(Value::Float(value)),
+        Value::Bool(_) => Err(invalid_type("integer or float", "bool")),
+        Value::Integer(value) => checked_float(value as f64),
+        Value::Float(value) => checked_float(value),
     }
 }
 
@@ -1225,7 +1319,7 @@ fn pare_vector_unary(vals: Vec<Value>) -> Result<Value, EvalError> {
 /// [`pare_vector_unary`] converts integers to floats and rejects booleans.
 fn apply_float_unary(val: Value, op: fn(f64) -> f64) -> Result<Value, EvalError> {
     match val {
-        Value::Float(value) => Ok(Value::Float(op(value))),
+        Value::Float(value) => checked_float(op(value)),
         Value::Bool(_) | Value::Integer(_) => Err(EvalError::UnexpectedOpcode),
     }
 }
@@ -1265,11 +1359,12 @@ mod tests {
     }
 
     fn small_f64() -> impl Strategy<Value = f64> {
-        -1_000_000.0f64..1_000_000.0
+        (-1_000_000.0f64..1_000_000.0)
+            .prop_filter("normal or zero float", |value| valid_float(*value))
     }
 
     fn tiny_f64() -> impl Strategy<Value = f64> {
-        -1_000.0f64..1_000.0
+        (-1_000.0f64..1_000.0).prop_filter("normal or zero float", |value| valid_float(*value))
     }
 
     fn nonzero_tiny_f64() -> impl Strategy<Value = f64> {
@@ -1277,11 +1372,15 @@ mod tests {
     }
 
     fn positive_f64() -> impl Strategy<Value = f64> {
-        0.000001f64..1_000_000.0
+        (0.000001f64..1_000_000.0).prop_filter("normal or zero float", |value| valid_float(*value))
     }
 
     fn unit_f64() -> impl Strategy<Value = f64> {
-        -1.0f64..1.0
+        (-1.0f64..1.0).prop_filter("normal or zero float", |value| valid_float(*value))
+    }
+
+    fn valid_float(value: f64) -> bool {
+        matches!(value.classify(), FpCategory::Zero | FpCategory::Normal)
     }
 
     fn generated_value() -> impl Strategy<Value = Value> {
@@ -1312,6 +1411,21 @@ mod tests {
         let result = eval(&expr, &variables);
 
         assert_eq!(result, Ok(Value::Integer(42)));
+    }
+
+    #[rstest]
+    #[case(f64::INFINITY, EvalError::NonFiniteFloat)]
+    #[case(f64::NEG_INFINITY, EvalError::NonFiniteFloat)]
+    #[case(f64::NAN, EvalError::NonFiniteFloat)]
+    #[case(f64::MIN_POSITIVE / 2.0, EvalError::SubnormalFloat)]
+    fn test_eval_variable_rejects_invalid_float(#[case] value: f64, #[case] expected: EvalError) {
+        let mut variables: HashMap<String, Value> = HashMap::new();
+        variables.insert("Test_Name".to_string(), Value::Float(value));
+        let expr = Box::new(Expression::Variable("Test_Name"));
+
+        let result = eval(&expr, &variables);
+
+        assert_eq!(result, Err(expected));
     }
 
     #[rstest]
@@ -1370,7 +1484,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(result, Err(EvalError::InvalidArity));
+        assert!(matches!(result, Err(EvalError::InvalidArity { .. })));
     }
 
     #[test]
@@ -1482,12 +1596,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Unary math operations not defined for bool".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -1553,12 +1662,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Bitwise operations not defined for floats".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[test]
@@ -1586,12 +1690,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Logical operations must be bools".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     /************ Binary operation tests *************/
@@ -1610,7 +1709,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(result, Err(EvalError::InvalidArity));
+        assert!(matches!(result, Err(EvalError::InvalidArity { .. })));
     }
 
     #[test]
@@ -1774,25 +1873,25 @@ mod tests {
 
         #[test]
         fn prop_unary_error_paths(_unit in Just(())) {
-            prop_assert_eq!(
+            assert!(matches!(
                 apply_unary(&Opcode::LogicalOr, Value::Integer(1)),
-                Err(EvalError::InvalidArity)
-            );
-            prop_assert!(matches!(
+                Err(EvalError::InvalidArity { .. })
+            ));
+            assert!(matches!(
                 apply_unary_math(&Opcode::Plus, Value::Bool(true)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_unary_math(&Opcode::Equals, Value::Integer(1)),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_bitwise_not(Value::Float(1.0)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_logical_not(Value::Integer(1)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
         }
 
@@ -1816,15 +1915,15 @@ mod tests {
         fn prop_float_unary_math_matches_rust(value in small_f64()) {
             prop_assert_eq!(
                 apply_unary(&Opcode::Plus, Value::Float(value)),
-                Ok(Value::Float(value))
+                checked_float(value)
             );
             prop_assert_eq!(
                 apply_unary(&Opcode::Minus, Value::Float(value)),
-                Ok(Value::Float(-value))
+                checked_float(-value)
             );
             prop_assert_eq!(
                 apply_unary(&Opcode::Degrees, Value::Float(value)),
-                Ok(Value::Float(value.to_radians()))
+                checked_float(value.to_radians())
             );
         }
 
@@ -1874,7 +1973,7 @@ mod tests {
                 apply_binary_math_operation(&Opcode::Power, Value::Integer(base), Value::Integer(exponent)),
                 base.checked_pow(exponent as u32)
                     .map(Value::Integer)
-                    .ok_or_else(|| EvalError::MathError("Integer overflow on power".to_string()))
+                    .ok_or_else(|| EvalError::IntegerOverflow { op: ArithmeticOp::Power })
             );
         }
 
@@ -1882,23 +1981,23 @@ mod tests {
         fn prop_float_binary_math_matches_rust(lhs in tiny_f64(), rhs in nonzero_tiny_f64()) {
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Plus, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs + rhs))
+                checked_float(lhs + rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Minus, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs - rhs))
+                checked_float(lhs - rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Multiply, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs * rhs))
+                checked_float(lhs * rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Divide, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs / rhs))
+                checked_float(lhs / rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Modulo, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs % rhs))
+                checked_float(lhs % rhs)
             );
         }
 
@@ -1906,15 +2005,15 @@ mod tests {
         fn prop_mixed_numeric_binary_math_promotes_to_float(lhs in tiny_i64(), rhs in nonzero_tiny_f64()) {
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Plus, Value::Integer(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs as f64 + rhs))
+                checked_float(lhs as f64 + rhs)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Multiply, Value::Float(rhs), Value::Integer(lhs)),
-                Ok(Value::Float(rhs * lhs as f64))
+                checked_float(rhs * lhs as f64)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Divide, Value::Integer(lhs), Value::Float(rhs)),
-                Ok(Value::Float(lhs as f64 / rhs))
+                checked_float(lhs as f64 / rhs)
             );
         }
 
@@ -1936,33 +2035,33 @@ mod tests {
                 apply_binary(&Opcode::LogicalAnd, Value::Bool(true), Value::Bool(false)),
                 Ok(Value::Bool(false))
             );
-            prop_assert_eq!(
+            assert!(matches!(
                 apply_binary(&Opcode::Degrees, Value::Integer(1), Value::Integer(1)),
-                Err(EvalError::InvalidArity)
-            );
+                Err(EvalError::InvalidArity { .. })
+            ));
             prop_assert_eq!(
                 apply_binary_comparison(&Opcode::Plus, Value::Integer(1), Value::Integer(1)),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_binary_comparison(&Opcode::Equals, Value::Integer(1), Value::Bool(true)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Divide, Value::Integer(1), Value::Integer(0)),
-                Err(EvalError::MathError("Division by zero".to_string()))
+                Err(EvalError::DivisionByZero)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Modulo, Value::Integer(1), Value::Integer(0)),
-                Err(EvalError::MathError("Modulo by zero".to_string()))
+                Err(EvalError::DivisionByZero)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Divide, Value::Float(1.0), Value::Float(0.0)),
-                Err(EvalError::MathError("Division by zero".to_string()))
+                Err(EvalError::DivisionByZero)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Modulo, Value::Float(1.0), Value::Float(0.0)),
-                Err(EvalError::MathError("Modulo by zero".to_string()))
+                Err(EvalError::DivisionByZero)
             );
             prop_assert_eq!(
                 apply_binary_math_operation(&Opcode::Power, Value::Float(2.0), Value::Float(3.0)),
@@ -1972,37 +2071,37 @@ mod tests {
                 apply_binary_math_operation(&Opcode::Equals, Value::Integer(1), Value::Integer(1)),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_binary_math_operation(&Opcode::Plus, Value::Bool(true), Value::Bool(false)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_binary_bit_operation(&Opcode::Plus, Value::Integer(1), Value::Integer(1)),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_binary_bit_operation(&Opcode::BitwiseAnd, Value::Float(1.0), Value::Integer(1)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_binary_bit_operation(&Opcode::BitwiseAnd, Value::Bool(true), Value::Integer(1)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_bitshift_operation(&Opcode::Plus, Value::Integer(1), Value::Integer(1)),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_bitshift_operation(&Opcode::BitshiftLeft, Value::Bool(true), Value::Integer(1)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_binary_logical_operation(&Opcode::Plus, Value::Bool(true), Value::Bool(false)),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_binary_logical_operation(&Opcode::LogicalAnd, Value::Integer(1), Value::Bool(false)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
         }
 
@@ -2106,7 +2205,10 @@ mod tests {
             );
             prop_assert_eq!(
                 apply_binary_comparison(&Opcode::ApproximatelyEquals, Value::Float(lhs), Value::Float(rhs)),
-                Ok(Value::Bool((lhs - rhs).abs() <= (lhs.max(rhs) * EPSILON)))
+                Ok(Value::Bool({
+                    let scale = lhs.abs().max(rhs.abs()).max(1.0);
+                    (lhs - rhs).abs() <= EPSILON * scale
+                }))
             );
         }
 
@@ -2204,62 +2306,62 @@ mod tests {
 
         #[test]
         fn prop_function_validation_error_paths(_unit in Just(())) {
-            prop_assert_eq!(apply_function(&Func::Min, vec![]), Err(EvalError::InvalidArity));
-            prop_assert!(matches!(
+            assert!(matches!(apply_function(&Func::Min, vec![]), Err(EvalError::InvalidArity { .. })));
+            assert!(matches!(
                 apply_function(&Func::Min, vec![Value::Bool(true)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_n_nary_function(&Func::Power, vec![Value::Integer(1), Value::Integer(2)]),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_min_function(vec![Value::Integer(1), Value::Float(1.0)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_min_function(vec![Value::Float(1.0), Value::Integer(1)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_min_function(vec![Value::Bool(true)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_max_function(vec![Value::Integer(1), Value::Float(1.0)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_max_function(vec![Value::Float(1.0), Value::Integer(1)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_max_function(vec![Value::Bool(true)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_rounding_function(&Func::Min, vec![Value::Integer(1)]),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert!(matches!(
+            assert!(matches!(
                 pare_vector_rounding(vec![Value::Bool(true)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 pare_vector_rounding(vec![Value::Integer(1), Value::Integer(1), Value::Integer(1)]),
-                Err(EvalError::InvalidArity)
+                Err(EvalError::InvalidArity { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_round_function(Value::Bool(true), None),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_floor_function(Value::Bool(true), None),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_ceiling_function(Value::Bool(true), None),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_function(&Func::Round, vec![Value::Integer(11), Value::Integer(10)]),
@@ -2293,25 +2395,25 @@ mod tests {
                 apply_binary_function(&Func::Min, vec![Value::Integer(1), Value::Integer(2)]),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert_eq!(
+            assert!(matches!(
                 apply_binary_function(&Func::Power, vec![Value::Integer(1)]),
-                Err(EvalError::InvalidArity)
-            );
-            prop_assert!(matches!(
+                Err(EvalError::InvalidArity { .. })
+            ));
+            assert!(matches!(
                 apply_binary_function(&Func::Power, vec![Value::Bool(true), Value::Integer(2)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_unary_function(&Func::Min, vec![Value::Integer(1)]),
                 Err(EvalError::UnexpectedOpcode)
             );
-            prop_assert_eq!(
+            assert!(matches!(
                 apply_unary_function(&Func::Cos, vec![]),
-                Err(EvalError::InvalidArity)
-            );
-            prop_assert!(matches!(
+                Err(EvalError::InvalidArity { .. })
+            ));
+            assert!(matches!(
                 apply_unary_function(&Func::Cos, vec![Value::Bool(true)]),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
             prop_assert_eq!(
                 apply_float_unary(Value::Integer(1), f64::cos),
@@ -2407,36 +2509,36 @@ mod tests {
 
         #[test]
         fn prop_rounding_functions_reject_nonpositive_integer_precision(value in small_i64(), precision in -1_000i64..=0) {
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_round_function(Value::Integer(value), Some(Value::Integer(precision))),
-                Err(EvalError::MathError(_))
+                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_floor_function(Value::Integer(value), Some(Value::Integer(precision))),
-                Err(EvalError::MathError(_))
+                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_ceiling_function(Value::Integer(value), Some(Value::Integer(precision))),
-                Err(EvalError::MathError(_))
+                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
             ));
         }
 
         #[test]
         fn prop_float_rounding_rejects_nonpositive_precision(value in small_f64(), precision in -1_000.0f64..=0.0) {
-            prop_assert!(matches!(round_f64(value, precision), Err(EvalError::MathError(_))));
-            prop_assert!(matches!(floor_f64(value, precision), Err(EvalError::MathError(_))));
-            prop_assert!(matches!(ceiling_f64(value, precision), Err(EvalError::MathError(_))));
-            prop_assert!(matches!(round_f64(f64::INFINITY, 1.0), Err(EvalError::MathError(_))));
-            prop_assert!(matches!(floor_f64(f64::INFINITY, 1.0), Err(EvalError::MathError(_))));
-            prop_assert!(matches!(ceiling_f64(f64::INFINITY, 1.0), Err(EvalError::MathError(_))));
+            assert!(matches!(round_f64(value, precision), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(floor_f64(value, precision), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(ceiling_f64(value, precision), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(round_f64(f64::INFINITY, 1.0), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(floor_f64(f64::INFINITY, 1.0), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
+            assert!(matches!(ceiling_f64(f64::INFINITY, 1.0), Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })));
         }
 
         #[test]
-        fn prop_float_to_integer_conversion_checks_bounds(value in -1_000_000.0f64..1_000_000.0) {
+        fn prop_float_to_integer_conversion_checks_bounds(value in small_f64()) {
             prop_assert_eq!(checked_f64_to_i64(value, "test"), Ok(value as i64));
-            prop_assert!(matches!(
+            assert!(matches!(
                 checked_f64_to_i64(f64::INFINITY, "test"),
-                Err(EvalError::MathError(_))
+                Err(EvalError::IntegerOverflow { .. } | EvalError::InvalidPrecision | EvalError::NonFiniteFloat | EvalError::SubnormalFloat | EvalError::DivisionByZero | EvalError::InvalidExponent { .. })
             ));
         }
 
@@ -2459,51 +2561,51 @@ mod tests {
 
             prop_assert_eq!(
                 apply_function(&Func::Power, vec![Value::Integer(integer_power_base), Value::Float(rhs)]),
-                Ok(Value::Float((integer_power_base as f64).powf(rhs)))
+                checked_float((integer_power_base as f64).powf(rhs))
             );
             prop_assert_eq!(
                 apply_function(&Func::Power, vec![Value::Float(float_power_base), Value::Integer(lhs)]),
-                Ok(Value::Float(float_power_base.powf(lhs as f64)))
+                checked_float(float_power_base.powf(lhs as f64))
             );
             prop_assert_eq!(
                 apply_function(&Func::Power, vec![Value::Float(float_power_base), Value::Float(rhs)]),
-                Ok(Value::Float(float_power_base.powf(rhs)))
+                checked_float(float_power_base.powf(rhs))
             );
             prop_assert_eq!(
                 apply_function(&Func::Modulo, vec![Value::Integer(lhs), Value::Float(rhs)]),
-                Ok(Value::Float((lhs as f64) % rhs))
+                checked_float((lhs as f64) % rhs)
             );
             prop_assert_eq!(
                 apply_function(&Func::Modulo, vec![Value::Float(rhs), Value::Integer(1)]),
-                Ok(Value::Float(rhs % 1.0))
+                checked_float(rhs % 1.0)
             );
             prop_assert_eq!(
                 apply_function(&Func::Modulo, vec![Value::Float(rhs), Value::Float(rhs)]),
-                Ok(Value::Float(rhs % rhs))
+                checked_float(rhs % rhs)
             );
             prop_assert_eq!(
                 apply_function(&Func::Remainder, vec![Value::Integer(lhs), Value::Float(rhs)]),
-                Ok(Value::Float((lhs as f64).rem_euclid(rhs)))
+                checked_float((lhs as f64).rem_euclid(rhs))
             );
             prop_assert_eq!(
                 apply_function(&Func::Remainder, vec![Value::Float(rhs), Value::Integer(1)]),
-                Ok(Value::Float(rhs.rem_euclid(1.0)))
+                checked_float(rhs.rem_euclid(1.0))
             );
             prop_assert_eq!(
                 apply_function(&Func::Remainder, vec![Value::Float(rhs), Value::Float(rhs)]),
-                Ok(Value::Float(rhs.rem_euclid(rhs)))
+                checked_float(rhs.rem_euclid(rhs))
             );
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_power_function(Value::Bool(true), Value::Integer(1)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_modulo_function(Value::Bool(true), Value::Integer(1)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
-            prop_assert!(matches!(
+            assert!(matches!(
                 apply_remainder_function(Value::Bool(true), Value::Integer(1)),
-                Err(EvalError::InvalidType(_))
+                Err(EvalError::InvalidType { .. })
             ));
         }
 
@@ -2513,26 +2615,26 @@ mod tests {
                 apply_function(&Func::Power, vec![Value::Integer(base), Value::Integer(exponent)]),
                 base.checked_pow(exponent as u32)
                     .map(Value::Integer)
-                    .ok_or_else(|| EvalError::MathError("Integer overflow on power".to_string()))
+                    .ok_or_else(|| EvalError::IntegerOverflow { op: ArithmeticOp::Power })
             );
         }
 
         #[test]
         fn prop_unary_float_functions_match_rust(value in -10.0f64..10.0) {
-            prop_assert_eq!(apply_function(&Func::Cos, vec![Value::Float(value)]), Ok(Value::Float(value.cos())));
-            prop_assert_eq!(apply_function(&Func::Sin, vec![Value::Float(value)]), Ok(Value::Float(value.sin())));
-            prop_assert_eq!(apply_function(&Func::Tan, vec![Value::Float(value)]), Ok(Value::Float(value.tan())));
-            prop_assert_eq!(apply_function(&Func::ATan, vec![Value::Float(value)]), Ok(Value::Float(value.atan())));
-            prop_assert_eq!(apply_function(&Func::Abs, vec![Value::Float(value)]), Ok(Value::Float(value.abs())));
-            prop_assert_eq!(apply_function(&Func::Exp, vec![Value::Float(value)]), Ok(Value::Float(value.exp())));
+            prop_assert_eq!(apply_function(&Func::Cos, vec![Value::Float(value)]), checked_float(value.cos()));
+            prop_assert_eq!(apply_function(&Func::Sin, vec![Value::Float(value)]), checked_float(value.sin()));
+            prop_assert_eq!(apply_function(&Func::Tan, vec![Value::Float(value)]), checked_float(value.tan()));
+            prop_assert_eq!(apply_function(&Func::ATan, vec![Value::Float(value)]), checked_float(value.atan()));
+            prop_assert_eq!(apply_function(&Func::Abs, vec![Value::Float(value)]), checked_float(value.abs()));
+            prop_assert_eq!(apply_function(&Func::Exp, vec![Value::Float(value)]), checked_float(value.exp()));
         }
 
         #[test]
         fn prop_unary_domain_limited_float_functions_match_rust(unit in unit_f64(), positive in positive_f64()) {
-            prop_assert_eq!(apply_function(&Func::ACos, vec![Value::Float(unit)]), Ok(Value::Float(unit.acos())));
-            prop_assert_eq!(apply_function(&Func::ASin, vec![Value::Float(unit)]), Ok(Value::Float(unit.asin())));
-            prop_assert_eq!(apply_function(&Func::Ln, vec![Value::Float(positive)]), Ok(Value::Float(positive.ln())));
-            prop_assert_eq!(apply_function(&Func::Log, vec![Value::Float(positive)]), Ok(Value::Float(positive.log10())));
+            prop_assert_eq!(apply_function(&Func::ACos, vec![Value::Float(unit)]), checked_float(unit.acos()));
+            prop_assert_eq!(apply_function(&Func::ASin, vec![Value::Float(unit)]), checked_float(unit.asin()));
+            prop_assert_eq!(apply_function(&Func::Ln, vec![Value::Float(positive)]), checked_float(positive.ln()));
+            prop_assert_eq!(apply_function(&Func::Log, vec![Value::Float(positive)]), checked_float(positive.log10()));
         }
     }
 
@@ -2554,12 +2656,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Cannot mix types for binary comparison".to_string()
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -2642,9 +2739,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer exponent too large".to_string()
-            ))
+            Err(EvalError::InvalidExponent {
+                exponent: 5_000_000_000
+            })
         );
     }
 
@@ -2661,9 +2758,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer overflow on power".to_string()
-            ))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Power
+            })
         );
     }
 
@@ -2686,7 +2783,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(result, Err(EvalError::MathError("Division by zero".to_string())));
+        assert_eq!(result, Err(EvalError::DivisionByZero));
     }
 
     #[rustfmt::skip]
@@ -2708,7 +2805,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(result, Err(EvalError::MathError("Modulo by zero".to_string())));
+        assert_eq!(result, Err(EvalError::DivisionByZero));
     }
 
     #[rstest]
@@ -2729,12 +2826,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Bools not supported for binary math".to_string()
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -2837,12 +2929,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Bitwise operations on floats not supported".to_string()
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -2861,12 +2948,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Cannot mix types for bitwise operations".to_string()
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -2937,12 +3019,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Logical operations must operate on bools".to_string()
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -3010,12 +3087,7 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Logical operations must operate on bools".to_string()
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -3101,7 +3173,7 @@ mod tests {
     fn test_apply_n_nary_function_empty_invalid_arity(#[case] func: Func) {
         let result = apply_n_nary_function(&func, vec![]);
 
-        assert_eq!(result, Err(EvalError::InvalidArity));
+        assert!(matches!(result, Err(EvalError::InvalidArity { .. })));
     }
 
     #[rstest]
@@ -3110,12 +3182,7 @@ mod tests {
     fn test_apply_n_nary_function_invalid_type_from_validation(#[case] func: Func) {
         let result = apply_n_nary_function(&func, vec![Value::Integer(1), Value::Bool(true)]);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "N-nary functions not defined for bool".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -3161,15 +3228,11 @@ mod tests {
     )]
     #[case(
         vec![Value::Bool(true)],
-        Err(EvalError::InvalidType(
-            "N-nary functions not defined for bool".to_string(),
-        ))
+        Err(EvalError::InvalidType { expected: "integer or float", actual: "bool" })
     )]
     #[case(
         vec![Value::Integer(1), Value::Bool(true), Value::Float(3.0)],
-        Err(EvalError::InvalidType(
-            "N-nary functions not defined for bool".to_string(),
-        ))
+        Err(EvalError::InvalidType { expected: "integer or float", actual: "bool" })
     )]
     fn test_pare_vector_n_nary(
         #[case] vals: Vec<Value>,
@@ -3201,10 +3264,10 @@ mod tests {
         vec![Value::Bool(true), Value::Integer(1)],
         "N-nary functions not defined for bool"
     )]
-    fn test_apply_min_function_invalid_type(#[case] vals: Vec<Value>, #[case] message: &str) {
+    fn test_apply_min_function_invalid_type(#[case] vals: Vec<Value>, #[case] _message: &str) {
         let result = apply_min_function(vals);
 
-        assert_eq!(result, Err(EvalError::InvalidType(message.to_string())));
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -3228,10 +3291,10 @@ mod tests {
         vec![Value::Bool(true), Value::Integer(1)],
         "N-nary functions not defined for bool"
     )]
-    fn test_apply_max_function_invalid_type(#[case] vals: Vec<Value>, #[case] message: &str) {
+    fn test_apply_max_function_invalid_type(#[case] vals: Vec<Value>, #[case] _message: &str) {
         let result = apply_max_function(vals);
 
-        assert_eq!(result, Err(EvalError::InvalidType(message.to_string())));
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     /************ Rounding function tests *************/
@@ -3262,7 +3325,7 @@ mod tests {
     fn test_apply_rounding_function_invalid_arguments() {
         let result = apply_rounding_function(&Func::Round, vec![]);
 
-        assert_eq!(result, Err(EvalError::InvalidArity));
+        assert!(matches!(result, Err(EvalError::InvalidArity { .. })));
     }
 
     #[rstest]
@@ -3290,28 +3353,22 @@ mod tests {
         vec![Value::Float(1.5), Value::Float(2.5)],
         Ok((Value::Float(1.5), Some(Value::Float(2.5))))
     )]
-    #[case(vec![], Err(EvalError::InvalidArity))]
+    #[case(vec![], Err(EvalError::InvalidArity { expected: "1 or 2", actual: 0 }))]
     #[case(
         vec![Value::Integer(1), Value::Float(2.0), Value::Float(3.0)],
-        Err(EvalError::InvalidArity)
+        Err(EvalError::InvalidArity { expected: "1 or 2", actual: 3 })
     )]
     #[case(
         vec![Value::Bool(true)],
-        Err(EvalError::InvalidType(
-            "Rounding functions not defined for bool".to_string(),
-        ))
+        Err(EvalError::InvalidType { expected: "integer or float", actual: "bool" })
     )]
     #[case(
         vec![Value::Bool(true), Value::Float(2.0)],
-        Err(EvalError::InvalidType(
-            "Rounding functions not defined for bool".to_string(),
-        ))
+        Err(EvalError::InvalidType { expected: "integer or float", actual: "bool" })
     )]
     #[case(
         vec![Value::Integer(1), Value::Bool(true)],
-        Err(EvalError::InvalidType(
-            "Rounding functions not defined for bool".to_string(),
-        ))
+        Err(EvalError::InvalidType { expected: "integer or float", actual: "bool" })
     )]
     fn test_pare_vector_rounding(
         #[case] vals: Vec<Value>,
@@ -3362,12 +3419,7 @@ mod tests {
     ) {
         let result = apply_round_function(value, precision);
 
-        assert_eq!(
-            result,
-            Err(EvalError::MathError(
-                "Round precision must be positive".to_string(),
-            ))
-        );
+        assert_eq!(result, Err(EvalError::InvalidPrecision));
     }
 
     #[test]
@@ -3376,9 +3428,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer overflow on round".to_string(),
-            ))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::FloatToInteger
+            })
         );
     }
 
@@ -3397,15 +3449,15 @@ mod tests {
     )]
     fn test_float_to_integer_conversion_negative_overflow(
         #[case] apply: fn(Value, Option<Value>) -> Result<Value, EvalError>,
-        #[case] operation: &str,
+        #[case] _operation: &str,
     ) {
         let result = apply(Value::Float(f64::MIN), Some(Value::Integer(1)));
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(format!(
-                "Integer overflow on {operation}"
-            )))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::FloatToInteger
+            })
         );
     }
 
@@ -3424,15 +3476,15 @@ mod tests {
     )]
     fn test_float_to_integer_conversion_upper_bound_overflow(
         #[case] apply: fn(Value, Option<Value>) -> Result<Value, EvalError>,
-        #[case] operation: &str,
+        #[case] _operation: &str,
     ) {
         let result = apply(Value::Float(i64::MAX as f64), Some(Value::Integer(1)));
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(format!(
-                "Integer overflow on {operation}"
-            )))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::FloatToInteger
+            })
         );
     }
 
@@ -3458,10 +3510,7 @@ mod tests {
     fn test_round_f64_float_overflow() {
         let result = round_f64(f64::INFINITY, 0.5);
 
-        assert_eq!(
-            result,
-            Err(EvalError::MathError("Float overflow on round".to_string(),))
-        );
+        assert_eq!(result, Err(EvalError::NonFiniteFloat));
     }
 
     #[test]
@@ -3470,9 +3519,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer overflow on round".to_string(),
-            ))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Round
+            })
         );
     }
 
@@ -3488,12 +3537,7 @@ mod tests {
     ) {
         let result = apply_round_function(value, precision);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Bools not valid for round functions".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -3535,12 +3579,7 @@ mod tests {
     ) {
         let result = apply_floor_function(value, precision);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Bools not valid for floor functions".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -3556,12 +3595,7 @@ mod tests {
     ) {
         let result = apply_floor_function(value, precision);
 
-        assert_eq!(
-            result,
-            Err(EvalError::MathError(
-                "Floor precision must be positive".to_string(),
-            ))
-        );
+        assert_eq!(result, Err(EvalError::InvalidPrecision));
     }
 
     #[test]
@@ -3570,9 +3604,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer overflow on floor".to_string(),
-            ))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::FloatToInteger
+            })
         );
     }
 
@@ -3582,9 +3616,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer overflow on floor".to_string(),
-            ))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Floor
+            })
         );
     }
 
@@ -3592,10 +3626,7 @@ mod tests {
     fn test_floor_f64_float_overflow() {
         let result = floor_f64(f64::MAX, 0.5);
 
-        assert_eq!(
-            result,
-            Err(EvalError::MathError("Float overflow on floor".to_string(),))
-        );
+        assert_eq!(result, Err(EvalError::NonFiniteFloat));
     }
 
     #[test]
@@ -3604,9 +3635,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer overflow on floor".to_string(),
-            ))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Floor
+            })
         );
     }
 
@@ -3649,12 +3680,7 @@ mod tests {
     ) {
         let result = apply_ceiling_function(value, precision);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Bools not valid for ceiling functions".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -3670,12 +3696,7 @@ mod tests {
     ) {
         let result = apply_ceiling_function(value, precision);
 
-        assert_eq!(
-            result,
-            Err(EvalError::MathError(
-                "Ceiling precision must be positive".to_string(),
-            ))
-        );
+        assert_eq!(result, Err(EvalError::InvalidPrecision));
     }
 
     #[test]
@@ -3684,9 +3705,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer overflow on ceiling".to_string(),
-            ))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Ceiling
+            })
         );
     }
 
@@ -3696,9 +3717,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer overflow on ceiling".to_string(),
-            ))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::FloatToInteger
+            })
         );
     }
 
@@ -3706,12 +3727,7 @@ mod tests {
     fn test_ceiling_f64_float_overflow() {
         let result = ceiling_f64(f64::MAX, 0.5);
 
-        assert_eq!(
-            result,
-            Err(EvalError::MathError(
-                "Float overflow on ceiling".to_string(),
-            ))
-        );
+        assert_eq!(result, Err(EvalError::NonFiniteFloat));
     }
 
     /************ Binary function tests *************/
@@ -3773,7 +3789,7 @@ mod tests {
     fn test_apply_binary_function_invalid_arguments() {
         let result = apply_binary_function(&Func::Power, vec![Value::Integer(1)]);
 
-        assert_eq!(result, Err(EvalError::InvalidArity));
+        assert!(matches!(result, Err(EvalError::InvalidArity { .. })));
     }
 
     #[rstest]
@@ -3785,23 +3801,19 @@ mod tests {
         vec![Value::Integer(1), Value::Float(2.0)],
         Ok((Value::Integer(1), Value::Float(2.0)))
     )]
-    #[case(vec![], Err(EvalError::InvalidArity))]
-    #[case(vec![Value::Integer(1)], Err(EvalError::InvalidArity))]
+    #[case(vec![], Err(EvalError::InvalidArity { expected: "2", actual: 0 }))]
+    #[case(vec![Value::Integer(1)], Err(EvalError::InvalidArity { expected: "2", actual: 1 }))]
     #[case(
         vec![Value::Integer(1), Value::Float(2.0), Value::Float(3.0)],
-        Err(EvalError::InvalidArity)
+        Err(EvalError::InvalidArity { expected: "2", actual: 3 })
     )]
     #[case(
         vec![Value::Bool(true), Value::Float(2.0)],
-        Err(EvalError::InvalidType(
-            "Binary functions not defined for bool".to_string(),
-        ))
+        Err(EvalError::InvalidType { expected: "integer or float", actual: "bool" })
     )]
     #[case(
         vec![Value::Integer(1), Value::Bool(true)],
-        Err(EvalError::InvalidType(
-            "Binary functions not defined for bool".to_string(),
-        ))
+        Err(EvalError::InvalidType { expected: "integer or float", actual: "bool" })
     )]
     fn test_pare_vector_binary(
         #[case] vals: Vec<Value>,
@@ -3821,12 +3833,7 @@ mod tests {
     fn test_apply_power_function_bool_invalid_type(#[case] lhs: Value, #[case] rhs: Value) {
         let result = apply_power_function(lhs, rhs);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Bools not valid for power functions".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[test]
@@ -3835,9 +3842,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer exponent too large".to_string(),
-            ))
+            Err(EvalError::InvalidExponent {
+                exponent: 5_000_000_000
+            })
         );
     }
 
@@ -3848,9 +3855,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(EvalError::MathError(
-                "Integer overflow on power".to_string(),
-            ))
+            Err(EvalError::IntegerOverflow {
+                op: ArithmeticOp::Power
+            })
         );
     }
 
@@ -3863,12 +3870,7 @@ mod tests {
     fn test_apply_modulo_function_bool_invalid_type(#[case] lhs: Value, #[case] rhs: Value) {
         let result = apply_modulo_function(lhs, rhs);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Bools not valid for modulo functions".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -3880,12 +3882,7 @@ mod tests {
     fn test_apply_remainder_function_bool_invalid_type(#[case] lhs: Value, #[case] rhs: Value) {
         let result = apply_remainder_function(lhs, rhs);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Bools not valid for power functions".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     /************ Unary function tests *************/
@@ -3946,12 +3943,7 @@ mod tests {
     fn test_apply_unary_function_bool_invalid_type(#[case] func: Func) {
         let result = apply_unary_function(&func, vec![Value::Bool(true)]);
 
-        assert_eq!(
-            result,
-            Err(EvalError::InvalidType(
-                "Unary functions not defined for bool".to_string(),
-            ))
-        );
+        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
     }
 
     #[rstest]
@@ -3968,7 +3960,7 @@ mod tests {
     fn test_apply_unary_function_invalid_arity(#[case] func: Func) {
         let result = apply_unary_function(&func, vec![Value::Float(1.0), Value::Float(2.0)]);
 
-        assert_eq!(result, Err(EvalError::InvalidArity));
+        assert!(matches!(result, Err(EvalError::InvalidArity { .. })));
     }
 
     #[rstest]
