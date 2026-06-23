@@ -17,3 +17,10 @@ path = "fuzz_targets/evaluate.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "evaluate_no_panic"
+path = "fuzz_targets/evaluate_no_panic.rs"
+test = false
+doc = false
+bench = false
