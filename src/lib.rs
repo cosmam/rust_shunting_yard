@@ -1,4 +1,10 @@
 #![allow(clippy::ptr_arg, clippy::vec_box)]
+#![deny(
+    clippy::expect_used,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unwrap_used
+)]
 use lalrpop_util::lalrpop_mod;
 use std::collections::HashMap;
 

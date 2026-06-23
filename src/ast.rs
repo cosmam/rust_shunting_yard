@@ -13,6 +13,13 @@
 //!
 //! NOTE: A valid AST does not guarantee a successful evaluation
 
+#![deny(
+    clippy::expect_used,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unwrap_used
+)]
+
 use crate::tokens::LexicalError;
 
 /// Parsed expression node.
@@ -149,7 +156,10 @@ mod tests {
     use lalrpop_util::lalrpop_mod;
     use proptest::prelude::*;
     use rstest::*;
-    lalrpop_mod!(pub calc); // Load the generated module
+    lalrpop_mod!(
+        #[allow(clippy::unwrap_used)]
+        pub calc
+    ); // Load the generated module
 
     fn parse_expression(
         input: &str,
