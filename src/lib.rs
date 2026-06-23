@@ -34,6 +34,11 @@ pub enum Value {
 /// [`HashMap`], such as a runtime context, cache, external environment, or
 /// future FFI adapter.
 ///
+/// Named resolver implementations are passed to resolver-based entrypoints by
+/// value. The crate provides a built-in borrowed [`HashMap`] adapter for the
+/// map-backed APIs, but it does not provide a blanket implementation for
+/// borrowed named resolver types.
+///
 /// Returned values are validated by evaluation before use, so invalid
 /// floating-point values such as NaN, infinity, and subnormal floats are
 /// rejected.
@@ -277,7 +282,9 @@ pub fn evaluate(text: &str, variables: &HashMap<String, Value>) -> Result<Value,
 /// Parse and evaluate an expression string with a custom variable resolver.
 ///
 /// This is the callback-backed counterpart to [`evaluate`]. It uses
-/// [`EvalOptions::default`] for resource limits.
+/// [`EvalOptions::default`] for resource limits. Use
+/// [`evaluate_with_resolver`] when passing a named [`VariableResolver`] type
+/// instead of a callback.
 ///
 /// # Examples
 ///
@@ -303,10 +310,47 @@ where
     evaluate_with_options_and_resolver(text, resolver, &EvalOptions::default())
 }
 
+/// Parse and evaluate an expression string with a custom variable resolver.
+///
+/// This is the default-limited entrypoint for named [`VariableResolver`]
+/// implementations. Use [`evaluate_with`] for callback-based resolution.
+/// Named resolvers are passed by value.
+/// Resolver-returned values are validated before evaluation uses them.
+///
+/// # Examples
+///
+/// ```
+/// # use shunting_yard::{evaluate_with_resolver, EvalError, Value, VariableResolver};
+/// struct RuntimeResolver;
+///
+/// impl VariableResolver for RuntimeResolver {
+///     fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+///         match name {
+///             "x" => Ok(Value::Integer(40)),
+///             other => Err(EvalError::UnknownVariable(other.to_owned())),
+///         }
+///     }
+/// }
+///
+/// let value = evaluate_with_resolver("x + 2", RuntimeResolver);
+///
+/// assert_eq!(value, Ok(Value::Integer(42)));
+/// ```
+///
+/// # Errors
+///
+/// Returns parser, lexical, resource-limit, resolver, or evaluation errors.
+pub fn evaluate_with_resolver<R>(text: &str, resolver: R) -> Result<Value, EvalError>
+where
+    R: VariableResolver,
+{
+    evaluate_with_options_and_resolver(text, resolver, &EvalOptions::default())
+}
+
 /// Parse and evaluate an expression string with explicit resource limits.
 ///
 /// This map-backed entrypoint preserves the original public API while routing
-/// variable lookup through [`VariableResolver`].
+/// variable lookup through the same resolver path as callback evaluation.
 ///
 /// See [`evaluate`] for the default-limited map-backed entrypoint.
 pub fn evaluate_with_options(
@@ -321,13 +365,42 @@ pub fn evaluate_with_options(
 /// custom variable resolver.
 ///
 /// This is the most general public entrypoint: callers provide both resource
-/// limits and the variable resolution strategy.
+/// limits and the variable resolution strategy. Named resolvers are passed by
+/// value; borrowed named resolvers need their own explicit [`VariableResolver`]
+/// implementation for that borrowed type.
 ///
 /// # Errors
 ///
 /// Returns [`EvalError::ResourceLimit`] when `text`, token count, AST size,
 /// depth, function arity, or parser recovery count exceeds `options`.
 /// Parser, lexer, evaluation, and resolver errors are returned unchanged.
+///
+/// # Examples
+///
+/// ```
+/// # use shunting_yard::{
+/// #     evaluate_with_options_and_resolver, EvalError, EvalOptions, Value, VariableResolver,
+/// # };
+/// struct RuntimeResolver;
+///
+/// impl VariableResolver for RuntimeResolver {
+///     fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+///         match name {
+///             "x" => Ok(Value::Integer(40)),
+///             other => Err(EvalError::UnknownVariable(other.to_owned())),
+///         }
+///     }
+/// }
+///
+/// let options = EvalOptions {
+///     max_tokens: 3,
+///     ..EvalOptions::default()
+/// };
+///
+/// let value = evaluate_with_options_and_resolver("x + 2", RuntimeResolver, &options);
+///
+/// assert_eq!(value, Ok(Value::Integer(42)));
+/// ```
 pub fn evaluate_with_options_and_resolver<R>(
     text: &str,
     resolver: R,
@@ -846,6 +919,70 @@ mod tests {
     }
 
     #[test]
+    fn evaluate_with_resolver_accepts_named_resolver_type() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        struct CountingResolver {
+            lookups: Rc<Cell<usize>>,
+        }
+
+        impl VariableResolver for CountingResolver {
+            fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+                self.lookups.set(self.lookups.get() + 1);
+
+                match name {
+                    "x" => Ok(Value::Integer(20)),
+                    other => Err(EvalError::UnknownVariable(other.to_owned())),
+                }
+            }
+        }
+
+        let lookups = Rc::new(Cell::new(0));
+        let resolver = CountingResolver {
+            lookups: Rc::clone(&lookups),
+        };
+
+        assert_eq!(
+            evaluate_with_resolver("x + x", resolver),
+            Ok(Value::Integer(40))
+        );
+        assert_eq!(lookups.get(), 2);
+    }
+
+    #[test]
+    fn evaluate_with_resolver_rejects_invalid_float_values_without_panicking() {
+        struct StaticFloatResolver {
+            value: f64,
+        }
+
+        impl VariableResolver for StaticFloatResolver {
+            fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+                match name {
+                    "x" => Ok(Value::Float(self.value)),
+                    other => Err(EvalError::UnknownVariable(other.to_owned())),
+                }
+            }
+        }
+
+        let cases = [
+            (f64::INFINITY, EvalError::NonFiniteFloat),
+            (f64::NEG_INFINITY, EvalError::NonFiniteFloat),
+            (f64::NAN, EvalError::NonFiniteFloat),
+            (f64::MIN_POSITIVE / 2.0, EvalError::SubnormalFloat),
+        ];
+
+        for (value, expected) in cases {
+            let result = std::panic::catch_unwind(|| {
+                evaluate_with_resolver("x", StaticFloatResolver { value })
+            });
+
+            assert!(result.is_ok(), "{value:?} panicked");
+            assert_eq!(result.unwrap(), Err(expected));
+        }
+    }
+
+    #[test]
     fn evaluate_with_reports_unknown_variable_from_callback() {
         let result = evaluate_with("missing", |name: &str| {
             Err(EvalError::UnknownVariable(name.to_owned()))
@@ -929,6 +1066,30 @@ mod tests {
             Ok(Value::Integer(0))
         );
         assert!(called.get());
+    }
+
+    #[test]
+    fn evaluate_with_options_and_resolver_accepts_named_resolver_type() {
+        struct RuntimeResolver;
+
+        impl VariableResolver for RuntimeResolver {
+            fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+                match name {
+                    "x" => Ok(Value::Integer(40)),
+                    other => Err(EvalError::UnknownVariable(other.to_owned())),
+                }
+            }
+        }
+
+        let options = EvalOptions {
+            max_tokens: 3,
+            ..EvalOptions::default()
+        };
+
+        assert_eq!(
+            evaluate_with_options_and_resolver("x + 2", RuntimeResolver, &options),
+            Ok(Value::Integer(42))
+        );
     }
 
     proptest! {
