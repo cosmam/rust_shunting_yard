@@ -1,0 +1,21 @@
+name: Miri
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+  MIRIFLAGS: -Zmiri-disable-isolation
+
+jobs:
+  miri:
+    name: Miri tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - run: cargo +nightly miri test --lib tests::evaluate_

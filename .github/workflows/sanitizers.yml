@@ -1,0 +1,23 @@
+name: Sanitizers
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 9 * * 1"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  asan:
+    name: AddressSanitizer tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-unknown-linux-gnu
+          components: rust-src
+      - run: |
+          RUSTFLAGS="-Zsanitizer=address" \
+          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu --all-targets --all-features
