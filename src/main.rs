@@ -1,3 +1,10 @@
+#![deny(
+    clippy::expect_used,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unwrap_used
+)]
+
 use std::collections::HashMap;
 use std::error::Error;
 use std::io::{self, Write};

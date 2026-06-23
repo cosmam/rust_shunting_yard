@@ -19,3 +19,11 @@ rstest = "0.26.1"
 
 [profile.release]
 overflow-checks = true
+
+[lints.rust]
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+
+# Panic-prone Clippy lints are denied in hand-written modules that can tolerate
+# them. LALRPOP-generated parser code uses internal unwraps, so a global Clippy
+# deny policy would fail on generated code rather than project code.

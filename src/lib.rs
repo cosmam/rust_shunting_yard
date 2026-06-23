@@ -1,5 +1,4 @@
 #![allow(clippy::ptr_arg, clippy::vec_box)]
-
 use lalrpop_util::lalrpop_mod;
 use std::collections::HashMap;
 
@@ -13,6 +12,9 @@ pub use tokens::LexicalError;
 lalrpop_mod!(
     #[allow(clippy::all)]
     #[allow(clippy::pedantic)]
+    // LALRPOP emits parser stack unwraps in generated code; keep the allowance
+    // scoped to the generated parser module instead of weakening crate policy.
+    #[allow(clippy::unwrap_used)]
     #[allow(dead_code)]
     calc
 );
@@ -977,8 +979,10 @@ mod tests {
                 evaluate_with_resolver("x", StaticFloatResolver { value })
             });
 
-            assert!(result.is_ok(), "{value:?} panicked");
-            assert_eq!(result.unwrap(), Err(expected));
+            match result {
+                Ok(actual) => assert_eq!(actual, Err(expected)),
+                Err(_) => panic!("{value:?} panicked"),
+            }
         }
     }
 
@@ -1032,8 +1036,10 @@ mod tests {
                 })
             });
 
-            assert!(result.is_ok(), "{value:?} panicked");
-            assert_eq!(result.unwrap(), Err(expected));
+            match result {
+                Ok(actual) => assert_eq!(actual, Err(expected)),
+                Err(_) => panic!("{value:?} panicked"),
+            }
         }
     }
 
@@ -1215,7 +1221,10 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(", ");
             let expression = format!("min({arguments})");
-            let expected = values.iter().copied().min().unwrap();
+            let expected = values
+                .iter()
+                .copied()
+                .fold(values[0], i64::min);
 
             prop_assert_eq!(
                 evaluate(&expression, &HashMap::new()),
@@ -1231,7 +1240,10 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(", ");
             let expression = format!("max({arguments})");
-            let expected = values.iter().copied().max().unwrap();
+            let expected = values
+                .iter()
+                .copied()
+                .fold(values[0], i64::max);
 
             prop_assert_eq!(
                 evaluate(&expression, &HashMap::new()),

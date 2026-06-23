@@ -1,3 +1,10 @@
+#![deny(
+    clippy::expect_used,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unwrap_used
+)]
+
 //! Token and lexical error definitions.
 //!
 //! # Overview
@@ -393,9 +400,29 @@ mod tests {
 
         #[test]
         fn prop_parse_errors_convert_to_lexical_errors(input in "[A-Za-z_][A-Za-z0-9_]{0,16}") {
-            let bool_error = input.parse::<bool>().unwrap_err();
-            let int_error = input.parse::<i64>().unwrap_err();
-            let float_error = input.parse::<f64>().unwrap_err();
+            prop_assume!(input != "true" && input != "false");
+
+            let bool_error = match input.parse::<bool>() {
+                Ok(value) => {
+                    prop_assert!(false, "{input:?} unexpectedly parsed as bool {value}");
+                    return Ok(());
+                }
+                Err(error) => error,
+            };
+            let int_error = match input.parse::<i64>() {
+                Ok(value) => {
+                    prop_assert!(false, "{input:?} unexpectedly parsed as integer {value}");
+                    return Ok(());
+                }
+                Err(error) => error,
+            };
+            let float_error = match input.parse::<f64>() {
+                Ok(value) => {
+                    prop_assert!(false, "{input:?} unexpectedly parsed as float {value}");
+                    return Ok(());
+                }
+                Err(error) => error,
+            };
 
             prop_assert_eq!(
                 LexicalError::from(bool_error),
@@ -431,7 +458,13 @@ mod tests {
             fraction in 0u32..1_000_000,
         ) {
             let input = format!("{whole}.{fraction:06}");
-            let expected = input.parse::<f64>().unwrap();
+            let expected = match input.parse::<f64>() {
+                Ok(value) => value,
+                Err(error) => {
+                    prop_assert!(false, "generated float literal {input:?} failed to parse: {error}");
+                    0.0
+                }
+            };
 
             prop_assert_eq!(single_token(&input), Some(Ok(Token::Float(expected))));
         }
@@ -442,7 +475,13 @@ mod tests {
             exponent in -20i32..20,
         ) {
             let input = format!("{mantissa}e{exponent}");
-            let expected = input.parse::<f64>().unwrap();
+            let expected = match input.parse::<f64>() {
+                Ok(value) => value,
+                Err(error) => {
+                    prop_assert!(false, "generated exponent literal {input:?} failed to parse: {error}");
+                    0.0
+                }
+            };
 
             prop_assert_eq!(single_token(&input), Some(Ok(Token::Float(expected))));
         }
