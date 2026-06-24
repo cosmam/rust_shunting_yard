@@ -1693,9 +1693,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Expression::Integer(1))]
-    #[case(Expression::Float(1.0))]
-    fn test_logical_not_invalid(#[case] val: Expression) {
+    #[case(Expression::Integer(1), "integer")]
+    #[case(Expression::Float(1.0), "float")]
+    fn test_logical_not_invalid(#[case] val: Expression, #[case] actual_type: &'static str) {
         let variables: HashMap<String, Value> = HashMap::new();
         let expr = Box::new(Expression::UnaryOperation {
             operator: Opcode::LogicalNot,
@@ -1704,7 +1704,13 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType {
+                expected: "bool",
+                actual: actual_type,
+            })
+        );
     }
 
     /************ Binary operation tests *************/

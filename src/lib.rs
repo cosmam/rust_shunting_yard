@@ -882,6 +882,24 @@ mod tests {
                 ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
             ))
         );
+        assert_eq!(
+            evaluate_with_options("(1 + 2) + 3", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
+            ))
+        );
+        assert_eq!(
+            evaluate_with_options("1 + (2 + 3)", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
+            ))
+        );
+        assert_eq!(
+            evaluate_with_options("min((1 + 2), 3)", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
+            ))
+        );
 
         let options = EvalOptions {
             max_function_args: 1,
@@ -895,6 +913,15 @@ mod tests {
         );
 
         let options = EvalOptions {
+            max_function_args: 2,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("min(1, 2)", &variables, &options),
+            Ok(Value::Integer(1))
+        );
+
+        let options = EvalOptions {
             max_parser_recoveries: 0,
             ..EvalOptions::default()
         };
@@ -903,6 +930,15 @@ mod tests {
             Err(EvalError::ResourceLimit(
                 ResourceLimitError::TooManyParserRecoveries { actual: 1, max: 0 }
             ))
+        );
+
+        let options = EvalOptions {
+            max_parser_recoveries: 1,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("1 +", &variables, &options),
+            Err(EvalError::ParserRecovery { count: 1 })
         );
     }
 
@@ -1070,6 +1106,16 @@ mod tests {
             Err(EvalError::ResourceLimit(
                 ResourceLimitError::InputTooLarge { actual: 5, max: 1 }
             ))
+        );
+        assert!(!called.get());
+
+        let options = EvalOptions {
+            max_input_bytes: 5,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options_and_resolver("1 + 2", &mut resolver, &options),
+            Ok(Value::Integer(3))
         );
         assert!(!called.get());
 
