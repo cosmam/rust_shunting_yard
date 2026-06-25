@@ -510,6 +510,7 @@ where
     evaluate_tokens_with_options_and_resolver(tokens, variables, &EvalOptions::default())
 }
 
+#[cfg(test)]
 fn evaluate_tokens_with_options_and_resolver<'input, Tokens, R>(
     tokens: Tokens,
     resolver: R,
