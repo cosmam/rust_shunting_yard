@@ -495,17 +495,8 @@ pub fn evaluate_with_options_and_resolver<R>(
 where
     R: VariableResolver,
 {
-    if text.len() > options.max_input_bytes {
-        return Err(EvalError::ResourceLimit(
-            ResourceLimitError::InputTooLarge {
-                actual: text.len(),
-                max: options.max_input_bytes,
-            },
-        ));
-    }
-
-    let lexer = lexer::Lexer::new(text);
-    evaluate_tokens_with_options_and_resolver(lexer, resolver, options)
+    let parsed = parse_with_options(text, options)?;
+    evaluate_parsed(&parsed, resolver)
 }
 
 #[cfg(test)]
@@ -1508,6 +1499,24 @@ mod tests {
             });
 
             prop_assert_eq!(callback_result, evaluate(&expression, &variables));
+        }
+
+        #[test]
+        fn prop_parse_then_eval_matches_evaluate(
+            name in variable_name(),
+            value in -1_000_000i64..1_000_000,
+            addend in -1_000_000i64..1_000_000,
+        ) {
+            let expression = format!("{name} + {addend}");
+            let mut variables = HashMap::new();
+            variables.insert(name.clone(), Value::Integer(value));
+
+            let parsed = parse(&expression)
+                .map_err(|error| TestCaseError::fail(format!("parse failed: {error:?}")))?;
+            let parse_then_eval = evaluate_parsed(&parsed, &variables);
+            let direct = evaluate(&expression, &variables);
+
+            prop_assert_eq!(parse_then_eval, direct);
         }
 
         #[test]
