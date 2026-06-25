@@ -94,6 +94,34 @@ assert_eq!(
 );
 ```
 
+### Parse once, evaluate many times
+
+For callers that need to evaluate the same expression against different variable
+sources, parse the expression once and evaluate the parsed expression
+repeatedly:
+
+```rust
+use shunting_yard::{evaluate_parsed, parse, EvalError, Value};
+use std::collections::HashMap;
+
+let parsed = parse("x + 1")?;
+
+let mut first = HashMap::new();
+first.insert("x".to_owned(), Value::Integer(1));
+
+let mut second = HashMap::new();
+second.insert("x".to_owned(), Value::Integer(41));
+
+assert_eq!(evaluate_parsed(&parsed, &first), Ok(Value::Integer(2)));
+assert_eq!(evaluate_parsed(&parsed, &second), Ok(Value::Integer(42)));
+
+# Ok::<(), EvalError>(())
+```
+
+`parse_with_options` enforces input, token, parser recovery, AST node, depth,
+and function-argument limits before evaluation. `evaluate_parsed` still
+validates resolver-returned values before using them.
+
 All evaluation paths reject variable values and operation results that would
 produce NaN, infinity, or subnormal floating-point values.
 
