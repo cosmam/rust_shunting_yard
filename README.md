@@ -97,6 +97,21 @@ assert_eq!(
 All evaluation paths reject variable values and operation results that would
 produce NaN, infinity, or subnormal floating-point values.
 
+## Verification
+
+The main local verification pass is:
+
+```bash
+cargo fmt --check
+cargo test --all-targets --all-features
+cargo test --release --all-targets --all-features
+cargo test --doc --all-features
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+See [guidelines/verification_and_ci_plan.md](guidelines/verification_and_ci_plan.md)
+for supply-chain checks, fuzzing, Miri, sanitizer commands, and CI expectations.
+
 ## Tokens to Parse
 
 Broadly speaking, there are four categories of things to parse: numbers, operators, functions, and mistakes. Details are presented below
@@ -135,7 +150,7 @@ Testing will be driven by files with a comma-separated string and number (except
 
 ### Number Formats
 
-Valid number format is: [A][.B][C][D]. At least one of A and B is required; iIf C or D is defined, the other must be.
+Valid number format is: [A][.B][C][D]. At least one of A and B is required; If C or D is defined, the other must be.
 
 * A: Any valid string of numbers. 1, 123, 000001, 100000
 * B: A period followed by a valid string of numbers

@@ -1,5 +1,10 @@
 #![allow(clippy::ptr_arg, clippy::vec_box)]
-
+#![deny(
+    clippy::expect_used,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unwrap_used
+)]
 use lalrpop_util::lalrpop_mod;
 use std::collections::HashMap;
 
@@ -13,6 +18,9 @@ pub use tokens::LexicalError;
 lalrpop_mod!(
     #[allow(clippy::all)]
     #[allow(clippy::pedantic)]
+    // LALRPOP emits parser stack unwraps in generated code; keep the allowance
+    // scoped to the generated parser module instead of weakening crate policy.
+    #[allow(clippy::unwrap_used)]
     #[allow(dead_code)]
     calc
 );
@@ -874,6 +882,24 @@ mod tests {
                 ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
             ))
         );
+        assert_eq!(
+            evaluate_with_options("(1 + 2) + 3", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
+            ))
+        );
+        assert_eq!(
+            evaluate_with_options("1 + (2 + 3)", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
+            ))
+        );
+        assert_eq!(
+            evaluate_with_options("min((1 + 2), 3)", &variables, &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
+            ))
+        );
 
         let options = EvalOptions {
             max_function_args: 1,
@@ -887,6 +913,15 @@ mod tests {
         );
 
         let options = EvalOptions {
+            max_function_args: 2,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("min(1, 2)", &variables, &options),
+            Ok(Value::Integer(1))
+        );
+
+        let options = EvalOptions {
             max_parser_recoveries: 0,
             ..EvalOptions::default()
         };
@@ -895,6 +930,15 @@ mod tests {
             Err(EvalError::ResourceLimit(
                 ResourceLimitError::TooManyParserRecoveries { actual: 1, max: 0 }
             ))
+        );
+
+        let options = EvalOptions {
+            max_parser_recoveries: 1,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options("1 +", &variables, &options),
+            Err(EvalError::ParserRecovery { count: 1 })
         );
     }
 
@@ -977,8 +1021,10 @@ mod tests {
                 evaluate_with_resolver("x", StaticFloatResolver { value })
             });
 
-            assert!(result.is_ok(), "{value:?} panicked");
-            assert_eq!(result.unwrap(), Err(expected));
+            match result {
+                Ok(actual) => assert_eq!(actual, Err(expected)),
+                Err(_) => panic!("{value:?} panicked"),
+            }
         }
     }
 
@@ -1032,8 +1078,10 @@ mod tests {
                 })
             });
 
-            assert!(result.is_ok(), "{value:?} panicked");
-            assert_eq!(result.unwrap(), Err(expected));
+            match result {
+                Ok(actual) => assert_eq!(actual, Err(expected)),
+                Err(_) => panic!("{value:?} panicked"),
+            }
         }
     }
 
@@ -1058,6 +1106,16 @@ mod tests {
             Err(EvalError::ResourceLimit(
                 ResourceLimitError::InputTooLarge { actual: 5, max: 1 }
             ))
+        );
+        assert!(!called.get());
+
+        let options = EvalOptions {
+            max_input_bytes: 5,
+            ..EvalOptions::default()
+        };
+        assert_eq!(
+            evaluate_with_options_and_resolver("1 + 2", &mut resolver, &options),
+            Ok(Value::Integer(3))
         );
         assert!(!called.get());
 
@@ -1215,7 +1273,10 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(", ");
             let expression = format!("min({arguments})");
-            let expected = values.iter().copied().min().unwrap();
+            let expected = values
+                .iter()
+                .copied()
+                .fold(values[0], i64::min);
 
             prop_assert_eq!(
                 evaluate(&expression, &HashMap::new()),
@@ -1231,7 +1292,10 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(", ");
             let expression = format!("max({arguments})");
-            let expected = values.iter().copied().max().unwrap();
+            let expected = values
+                .iter()
+                .copied()
+                .fold(values[0], i64::max);
 
             prop_assert_eq!(
                 evaluate(&expression, &HashMap::new()),

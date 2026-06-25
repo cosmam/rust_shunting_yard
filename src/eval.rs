@@ -1,3 +1,10 @@
+#![deny(
+    clippy::expect_used,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unwrap_used
+)]
+
 //! Evaluation for parsed expressions.
 //!
 //! # Overview
@@ -1686,9 +1693,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Expression::Integer(1))]
-    #[case(Expression::Float(1.0))]
-    fn test_logical_not_invalid(#[case] val: Expression) {
+    #[case(Expression::Integer(1), "integer")]
+    #[case(Expression::Float(1.0), "float")]
+    fn test_logical_not_invalid(#[case] val: Expression, #[case] actual_type: &'static str) {
         let variables: HashMap<String, Value> = HashMap::new();
         let expr = Box::new(Expression::UnaryOperation {
             operator: Opcode::LogicalNot,
@@ -1697,7 +1704,13 @@ mod tests {
 
         let result = eval(&expr, &variables);
 
-        assert!(matches!(result, Err(EvalError::InvalidType { .. })));
+        assert_eq!(
+            result,
+            Err(EvalError::InvalidType {
+                expected: "bool",
+                actual: actual_type,
+            })
+        );
     }
 
     /************ Binary operation tests *************/
@@ -2278,8 +2291,8 @@ mod tests {
         #[test]
         fn prop_min_max_integer_vectors_match_rust(values in proptest::collection::vec(small_i64(), 1..32)) {
             let arguments = values.iter().copied().map(Value::Integer).collect::<Vec<_>>();
-            let min = values.iter().copied().min().unwrap();
-            let max = values.iter().copied().max().unwrap();
+            let min = values.iter().copied().fold(values[0], i64::min);
+            let max = values.iter().copied().fold(values[0], i64::max);
 
             prop_assert_eq!(apply_function(&Func::Min, arguments.clone()), Ok(Value::Integer(min)));
             prop_assert_eq!(apply_function(&Func::Max, arguments), Ok(Value::Integer(max)));
@@ -2432,7 +2445,16 @@ mod tests {
         fn prop_integer_rounding_functions_match_expected_precision(value in small_i64(), precision in 1i64..1_000) {
             let floored = value.div_euclid(precision) * precision;
             let ceiling = if floored == value { floored } else { floored + precision };
-            let rounded = value.try_round_to(precision, Tie::Up).unwrap();
+            let rounded = match value.try_round_to(precision, Tie::Up) {
+                Some(value) => value,
+                None => {
+                    prop_assert!(
+                        false,
+                        "rounding {value} to precision {precision} unexpectedly overflowed"
+                    );
+                    0
+                }
+            };
 
             prop_assert_eq!(
                 apply_round_function(Value::Integer(value), Some(Value::Integer(precision))),

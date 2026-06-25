@@ -13,6 +13,13 @@
 //!
 //! NOTE: A valid AST does not guarantee a successful evaluation
 
+#![deny(
+    clippy::expect_used,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unwrap_used
+)]
+
 use crate::tokens::LexicalError;
 
 /// Parsed expression node.
@@ -149,7 +156,10 @@ mod tests {
     use lalrpop_util::lalrpop_mod;
     use proptest::prelude::*;
     use rstest::*;
-    lalrpop_mod!(pub calc); // Load the generated module
+    lalrpop_mod!(
+        #[allow(clippy::unwrap_used)]
+        pub calc
+    ); // Load the generated module
 
     fn parse_expression(
         input: &str,
@@ -279,7 +289,13 @@ mod tests {
         #[test]
         fn prop_parse_float_literal(whole in 0u64..1_000_000, fraction in 0u32..1_000_000) {
             let input = format!("{whole}.{fraction:06}");
-            let expected = input.parse::<f64>().unwrap();
+            let expected = match input.parse::<f64>() {
+                Ok(value) => value,
+                Err(error) => {
+                    prop_assert!(false, "generated float literal {input:?} failed to parse: {error}");
+                    0.0
+                }
+            };
 
             prop_assert_eq!(parse_expression(&input), Ok(Box::new(Expression::Float(expected))));
         }

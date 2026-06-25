@@ -1,3 +1,10 @@
+#![deny(
+    clippy::expect_used,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unwrap_used
+)]
+
 //! Lexer adapter for parser token streams.
 //!
 //! # Overview
