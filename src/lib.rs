@@ -450,6 +450,17 @@ where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
     R: VariableResolver,
 {
+    let ast = parse_tokens_with_options(tokens, options)?;
+    eval::eval(&ast, resolver)
+}
+
+fn parse_tokens_with_options<'input, Tokens>(
+    tokens: Tokens,
+    options: &EvalOptions,
+) -> Result<ast::Expression<'input>, EvalError>
+where
+    Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
+{
     let parser = calc::ExpressionParser::new();
     let mut checked_tokens = Vec::new();
 
@@ -492,7 +503,7 @@ where
             }
 
             validate_ast_limits(&ast, options)?;
-            eval::eval(&ast, resolver)
+            Ok(*ast)
         }
         Err(_) => Err(EvalError::ParserError),
     }
