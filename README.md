@@ -122,6 +122,40 @@ assert_eq!(evaluate_parsed(&parsed, &second), Ok(Value::Integer(42)));
 and function-argument limits before evaluation. `evaluate_parsed` still
 validates resolver-returned values before using them.
 
+### Diagnostic-aware APIs
+
+For callers that need to distinguish lexical, parse, resource-limit, and
+evaluation failures, use the diagnostic-aware APIs. The original `evaluate`,
+`parse`, and parsed-evaluation APIs remain available for compatibility.
+
+```rust
+use shunting_yard::{evaluate_detailed, Error};
+use std::collections::HashMap;
+
+let variables = HashMap::new();
+
+match evaluate_detailed("1 / 0", &variables) {
+    Err(Error::Eval(error)) => {
+        println!("evaluation failed: {error}");
+    }
+    Err(Error::Parse(diagnostics)) => {
+        println!("parse failed with {} diagnostic(s)", diagnostics.len());
+    }
+    Err(Error::Lexical { span, error }) => {
+        println!("lexical error at {span:?}: {error}");
+    }
+    Err(Error::ResourceLimit(error)) => {
+        println!("resource limit exceeded: {error}");
+    }
+    Ok(value) => {
+        println!("value: {value:?}");
+    }
+}
+```
+
+Detailed parser diagnostics include source spans when available and preserve
+parser recovery information separately from unrecovered parse failures.
+
 All evaluation paths reject variable values and operation results that would
 produce NaN, infinity, or subnormal floating-point values.
 

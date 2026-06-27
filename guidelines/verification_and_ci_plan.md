@@ -124,3 +124,13 @@ Parse/evaluate separation must preserve the existing safety model:
   before evaluation;
 - evaluate-parsed APIs must still validate resolver-returned values;
 - no new unsafe code should be introduced.
+
+Diagnostic-aware APIs must preserve compatibility:
+
+- detailed APIs must return `Error::Lexical`, `Error::Parse`,
+  `Error::ResourceLimit`, or `Error::Eval` according to the failure stage;
+- legacy APIs must continue returning their existing `EvalError` variants;
+- converting detailed errors into legacy `EvalError` must preserve existing
+  public behavior;
+- tests should match structured variants and avoid depending on free-form
+  display strings.
