@@ -284,7 +284,8 @@ impl ParseDiagnostics {
         self.diagnostics.is_empty()
     }
 
-    fn recovery_count(&self) -> usize {
+    /// Return the number of parser recovery diagnostics.
+    pub fn recovery_count(&self) -> usize {
         self.diagnostics
             .iter()
             .filter(|diagnostic| matches!(diagnostic.kind, ParseDiagnosticKind::Recovery { .. }))
@@ -411,6 +412,27 @@ pub fn parse(text: &str) -> Result<ParsedExpression<'_>, EvalError> {
     parse_with_options(text, &EvalOptions::default())
 }
 
+/// Parse expression text using default evaluation options and return structured
+/// diagnostic errors.
+///
+/// # Examples
+///
+/// ```
+/// use shunting_yard::{parse_detailed, Error};
+///
+/// let error = parse_detailed("$");
+///
+/// assert!(matches!(error, Err(Error::Lexical { .. })));
+/// ```
+///
+/// # Errors
+///
+/// Returns [`Error::Lexical`], [`Error::Parse`], or [`Error::ResourceLimit`]
+/// when `text` cannot be parsed within [`EvalOptions::default`].
+pub fn parse_detailed(text: &str) -> Result<ParsedExpression<'_>, Error> {
+    parse_with_options_detailed(text, &EvalOptions::default())
+}
+
 /// Parse expression text into a reusable parsed expression.
 ///
 /// The returned [`ParsedExpression`] hides the internal AST and can be evaluated
@@ -436,6 +458,34 @@ pub fn parse_with_options<'input>(
 
     let lexer = lexer::Lexer::new(text);
     let ast = parse_tokens_with_options(lexer, options)?;
+    Ok(ParsedExpression::new(ast))
+}
+
+/// Parse expression text into a reusable parsed expression and return
+/// structured diagnostic errors.
+///
+/// The returned [`ParsedExpression`] hides the internal AST and can be evaluated
+/// repeatedly by APIs that accept parsed expressions.
+///
+/// # Errors
+///
+/// Returns [`Error::ResourceLimit`] when `text`, token count, AST size, depth,
+/// function arity, or parser recovery count exceeds `options`. Lexer failures
+/// are returned as [`Error::Lexical`], and parser failures are returned as
+/// [`Error::Parse`].
+pub fn parse_with_options_detailed<'input>(
+    text: &'input str,
+    options: &EvalOptions,
+) -> Result<ParsedExpression<'input>, Error> {
+    if text.len() > options.max_input_bytes {
+        return Err(Error::ResourceLimit(ResourceLimitError::InputTooLarge {
+            actual: text.len(),
+            max: options.max_input_bytes,
+        }));
+    }
+
+    let lexer = lexer::Lexer::new(text);
+    let ast = parse_tokens_with_options_detailed(lexer, options)?;
     Ok(ParsedExpression::new(ast))
 }
 
@@ -701,6 +751,135 @@ where
     }
 }
 
+fn parse_tokens_with_options_detailed<'input, Tokens>(
+    tokens: Tokens,
+    options: &EvalOptions,
+) -> Result<ast::Expression<'input>, Error>
+where
+    Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
+{
+    let parser = calc::ExpressionParser::new();
+    let mut checked_tokens = Vec::new();
+
+    for token in tokens {
+        if checked_tokens.len() >= options.max_tokens {
+            return Err(Error::ResourceLimit(ResourceLimitError::TooManyTokens {
+                actual: checked_tokens.len() + 1,
+                max: options.max_tokens,
+            }));
+        }
+
+        match token {
+            Ok((start, tokens::Token::Error(error), end)) => {
+                return Err(Error::Lexical {
+                    span: SourceSpan::new(start, end),
+                    error,
+                });
+            }
+            Err(error) => {
+                return Err(Error::Lexical {
+                    span: SourceSpan::new(0, 0),
+                    error,
+                });
+            }
+            Ok(token) => checked_tokens.push(Ok(token)),
+        }
+    }
+
+    let mut errors = Vec::new();
+    let result = parser.parse(&mut errors, checked_tokens);
+
+    match result {
+        Ok(ast) => {
+            if !errors.is_empty() {
+                if errors.len() > options.max_parser_recoveries {
+                    return Err(Error::ResourceLimit(
+                        ResourceLimitError::TooManyParserRecoveries {
+                            actual: errors.len(),
+                            max: options.max_parser_recoveries,
+                        },
+                    ));
+                }
+
+                return Err(Error::Parse(ParseDiagnostics {
+                    diagnostics: errors.into_iter().map(recovery_to_diagnostic).collect(),
+                }));
+            }
+
+            validate_ast_limits(&ast, options).map_err(eval_error_to_stage_error)?;
+            Ok(*ast)
+        }
+        Err(error) => Err(Error::Parse(ParseDiagnostics {
+            diagnostics: vec![parse_error_to_diagnostic(error)],
+        })),
+    }
+}
+
+fn eval_error_to_stage_error(error: EvalError) -> Error {
+    match error {
+        EvalError::ResourceLimit(error) => Error::ResourceLimit(error),
+        error => Error::Eval(error),
+    }
+}
+
+fn parse_error_to_diagnostic<'input>(
+    error: lalrpop_util::ParseError<usize, tokens::Token<'input>, tokens::LexicalError>,
+) -> ParseDiagnostic {
+    match error {
+        lalrpop_util::ParseError::InvalidToken { location } => ParseDiagnostic {
+            span: Some(SourceSpan::new(location, location)),
+            kind: ParseDiagnosticKind::InvalidToken,
+        },
+        lalrpop_util::ParseError::UnrecognizedEof { location, expected } => ParseDiagnostic {
+            span: Some(SourceSpan::new(location, location)),
+            kind: ParseDiagnosticKind::UnrecognizedEof { expected },
+        },
+        lalrpop_util::ParseError::UnrecognizedToken { token, expected } => {
+            let (start, token, end) = token;
+            ParseDiagnostic {
+                span: Some(SourceSpan::new(start, end)),
+                kind: ParseDiagnosticKind::UnrecognizedToken {
+                    token: format!("{token:?}"),
+                    expected,
+                },
+            }
+        }
+        lalrpop_util::ParseError::ExtraToken { token } => {
+            let (start, token, end) = token;
+            ParseDiagnostic {
+                span: Some(SourceSpan::new(start, end)),
+                kind: ParseDiagnosticKind::ExtraToken {
+                    token: format!("{token:?}"),
+                },
+            }
+        }
+        lalrpop_util::ParseError::User { error } => ParseDiagnostic {
+            span: None,
+            kind: ParseDiagnosticKind::User {
+                message: error.to_string(),
+            },
+        },
+    }
+}
+
+fn recovery_to_diagnostic<'input>(
+    recovery: lalrpop_util::ErrorRecovery<usize, tokens::Token<'input>, tokens::LexicalError>,
+) -> ParseDiagnostic {
+    let cause = parse_error_to_diagnostic(recovery.error);
+
+    ParseDiagnostic {
+        span: cause.span,
+        kind: ParseDiagnosticKind::Recovery {
+            dropped_tokens: recovery
+                .dropped_tokens
+                .into_iter()
+                .map(|(_, token, _)| format!("{token:?}"))
+                .collect(),
+            cause: Box::new(cause.kind),
+        },
+    }
+}
+
 fn validate_ast_limits(expr: &ast::Expression<'_>, options: &EvalOptions) -> Result<(), EvalError> {
     fn walk(
         expr: &ast::Expression<'_>,
@@ -942,10 +1121,53 @@ mod tests {
     }
 
     #[test]
+    fn parse_detailed_reports_lexical_span() {
+        assert!(matches!(
+            parse_detailed("$"),
+            Err(Error::Lexical {
+                span: SourceSpan { start: 0, end: 1 },
+                error: LexicalError::UnknownSymbol(_),
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_detailed_reports_token_stream_lexical_error_without_span() {
+        assert_eq!(
+            parse_tokens_with_options_detailed(
+                [Err(tokens::LexicalError::InvalidToken)],
+                &EvalOptions::default(),
+            ),
+            Err(Error::Lexical {
+                span: SourceSpan::new(0, 0),
+                error: LexicalError::InvalidToken,
+            })
+        );
+    }
+
+    #[test]
     fn parse_reports_parser_recovery() {
         assert!(matches!(
             parse("1 +"),
             Err(EvalError::ParserRecovery { count: 1 })
+        ));
+    }
+
+    #[test]
+    fn parse_detailed_preserves_recovery_diagnostics() {
+        let diagnostics = match parse_detailed("1 +") {
+            Err(Error::Parse(diagnostics)) => diagnostics,
+            other => panic!("expected parse diagnostics, got {other:?}"),
+        };
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics.recovery_count(), 1);
+
+        let diagnostic = &diagnostics.diagnostics[0];
+        assert!(diagnostic.span.is_some());
+        assert!(matches!(
+            diagnostic.kind,
+            ParseDiagnosticKind::Recovery { .. }
         ));
     }
 
@@ -1014,6 +1236,56 @@ mod tests {
         assert!(matches!(
             parse_with_options("1 +", &options),
             Err(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyParserRecoveries { actual: 1, max: 0 }
+            ))
+        ));
+    }
+
+    #[test]
+    fn parse_with_options_detailed_enforces_resource_limits() {
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options_detailed("1 + 2", &options),
+            Err(Error::ResourceLimit(ResourceLimitError::InputTooLarge {
+                actual: 5,
+                max: 1,
+            }))
+        ));
+
+        let options = EvalOptions {
+            max_tokens: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options_detailed("1 + 2", &options),
+            Err(Error::ResourceLimit(ResourceLimitError::TooManyTokens {
+                actual: 2,
+                max: 1,
+            }))
+        ));
+
+        let options = EvalOptions {
+            max_ast_nodes: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options_detailed("1 + 2", &options),
+            Err(Error::ResourceLimit(ResourceLimitError::AstTooLarge {
+                actual: 2,
+                max: 1,
+            }))
+        ));
+
+        let options = EvalOptions {
+            max_parser_recoveries: 0,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options_detailed("1 +", &options),
+            Err(Error::ResourceLimit(
                 ResourceLimitError::TooManyParserRecoveries { actual: 1, max: 0 }
             ))
         ));
