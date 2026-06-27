@@ -204,6 +204,128 @@ impl<'input> ParsedExpression<'input> {
     }
 }
 
+/// Byte range in the original source text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceSpan {
+    /// Inclusive start byte offset.
+    pub start: usize,
+    /// Exclusive end byte offset.
+    pub end: usize,
+}
+
+impl SourceSpan {
+    /// Build a source span from byte offsets.
+    pub const fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+}
+
+/// One parser diagnostic associated with a source span when one is available.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseDiagnostic {
+    /// Source range for this diagnostic, if the parser reported one.
+    pub span: Option<SourceSpan>,
+    /// Structured diagnostic detail.
+    pub kind: ParseDiagnosticKind,
+}
+
+/// Structured parser diagnostic categories.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ParseDiagnosticKind {
+    /// The parser received an invalid token.
+    InvalidToken,
+    /// The input ended before the parser could finish an expression.
+    UnrecognizedEof {
+        /// Token names that would have allowed parsing to continue.
+        expected: Vec<String>,
+    },
+    /// The parser found an unexpected token.
+    UnrecognizedToken {
+        /// Debug representation of the unexpected token.
+        token: String,
+        /// Token names that would have allowed parsing to continue.
+        expected: Vec<String>,
+    },
+    /// The parser found extra input after a complete expression.
+    ExtraToken {
+        /// Debug representation of the extra token.
+        token: String,
+    },
+    /// Parser user error.
+    User {
+        /// Owned error message.
+        message: String,
+    },
+    /// Parser recovery diagnostic containing the tokens dropped by recovery.
+    Recovery {
+        /// Debug representations of tokens discarded during recovery.
+        dropped_tokens: Vec<String>,
+        /// Underlying parser diagnostic that caused recovery.
+        cause: Box<ParseDiagnosticKind>,
+    },
+}
+
+/// Structured parser diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{count} parse diagnostic(s)", count = .diagnostics.len())]
+pub struct ParseDiagnostics {
+    /// Individual parser diagnostics.
+    pub diagnostics: Vec<ParseDiagnostic>,
+}
+
+impl ParseDiagnostics {
+    /// Return the number of diagnostics.
+    pub fn len(&self) -> usize {
+        self.diagnostics.len()
+    }
+
+    /// Return true when no diagnostics are present.
+    pub fn is_empty(&self) -> bool {
+        self.diagnostics.is_empty()
+    }
+
+    fn recovery_count(&self) -> usize {
+        self.diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.kind, ParseDiagnosticKind::Recovery { .. }))
+            .count()
+    }
+}
+
+/// Top-level error returned by diagnostic-aware APIs.
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum Error {
+    /// A configured resource limit was exceeded.
+    #[error("{0}")]
+    ResourceLimit(ResourceLimitError),
+    /// The lexer found malformed source text.
+    #[error("lexical error at bytes {span:?}: {error}")]
+    Lexical {
+        /// Source range for the lexical error.
+        span: SourceSpan,
+        /// Lexical error detail.
+        error: LexicalError,
+    },
+    /// The parser could not produce a valid expression.
+    #[error("{0}")]
+    Parse(ParseDiagnostics),
+    /// Evaluation failed after parsing succeeded.
+    #[error("{0}")]
+    Eval(EvalError),
+}
+
+impl From<ResourceLimitError> for Error {
+    fn from(error: ResourceLimitError) -> Self {
+        Error::ResourceLimit(error)
+    }
+}
+
+impl From<EvalError> for Error {
+    fn from(error: EvalError) -> Self {
+        Error::Eval(error)
+    }
+}
+
 /// Error returned when expression evaluation fails.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum EvalError {
@@ -748,6 +870,64 @@ mod tests {
         assert_eq!(
             evaluate_tokens(tokens, &variables),
             Err(EvalError::LexicalError(tokens::LexicalError::InvalidToken))
+        );
+    }
+
+    #[test]
+    fn source_span_records_byte_offsets() {
+        assert_eq!(SourceSpan::new(2, 5), SourceSpan { start: 2, end: 5 });
+    }
+
+    #[test]
+    fn parse_diagnostics_reports_length_and_empty_state() {
+        let empty = ParseDiagnostics {
+            diagnostics: Vec::new(),
+        };
+        assert_eq!(empty.len(), 0);
+        assert!(empty.is_empty());
+
+        let diagnostics = ParseDiagnostics {
+            diagnostics: vec![ParseDiagnostic {
+                span: Some(SourceSpan::new(1, 2)),
+                kind: ParseDiagnosticKind::InvalidToken,
+            }],
+        };
+        assert_eq!(diagnostics.len(), 1);
+        assert!(!diagnostics.is_empty());
+    }
+
+    #[test]
+    fn parse_diagnostics_counts_recoveries() {
+        let diagnostics = ParseDiagnostics {
+            diagnostics: vec![
+                ParseDiagnostic {
+                    span: Some(SourceSpan::new(1, 2)),
+                    kind: ParseDiagnosticKind::InvalidToken,
+                },
+                ParseDiagnostic {
+                    span: Some(SourceSpan::new(2, 3)),
+                    kind: ParseDiagnosticKind::Recovery {
+                        dropped_tokens: vec!["Plus".to_owned()],
+                        cause: Box::new(ParseDiagnosticKind::UnrecognizedEof {
+                            expected: vec!["Integer".to_owned()],
+                        }),
+                    },
+                },
+            ],
+        };
+
+        assert_eq!(diagnostics.recovery_count(), 1);
+    }
+
+    #[test]
+    fn top_level_error_wraps_resource_and_eval_failures() {
+        assert_eq!(
+            Error::from(ResourceLimitError::TooManyTokens { actual: 2, max: 1 }),
+            Error::ResourceLimit(ResourceLimitError::TooManyTokens { actual: 2, max: 1 })
+        );
+        assert_eq!(
+            Error::from(EvalError::DivisionByZero),
+            Error::Eval(EvalError::DivisionByZero)
         );
     }
 
