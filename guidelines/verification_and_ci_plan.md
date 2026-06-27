@@ -115,3 +115,12 @@ All evaluation paths must continue to reject malformed parser recovery, invalid
 variable floats, non-finite float operation results, subnormal floats, checked
 integer overflows, divide/modulo/remainder by zero, invalid shifts, and resource
 limit violations with typed errors rather than panics.
+
+Parse/evaluate separation must preserve the existing safety model:
+
+- direct `evaluate` and `parse` plus `evaluate_parsed` must produce equivalent
+  results for successful inputs;
+- parse-only APIs must enforce lexical, parser, and resource-limit failures
+  before evaluation;
+- evaluate-parsed APIs must still validate resolver-returned values;
+- no new unsafe code should be introduced.

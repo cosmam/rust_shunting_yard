@@ -192,6 +192,18 @@ impl Default for EvalOptions {
     }
 }
 
+/// Parsed expression that can be evaluated repeatedly with different resolvers.
+#[derive(Clone, Debug)]
+pub struct ParsedExpression<'input> {
+    ast: ast::Expression<'input>,
+}
+
+impl<'input> ParsedExpression<'input> {
+    fn new(ast: ast::Expression<'input>) -> Self {
+        Self { ast }
+    }
+}
+
 /// Error returned when expression evaluation fails.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum EvalError {
@@ -265,6 +277,72 @@ pub enum EvalError {
     /// A variable reference could not be found in the provided bindings.
     #[error("unknown variable: {0}")]
     UnknownVariable(String),
+}
+
+/// Parse expression text using default evaluation options.
+///
+/// # Errors
+///
+/// Returns parser, lexical, or resource-limit errors when `text` cannot be
+/// parsed within [`EvalOptions::default`].
+pub fn parse(text: &str) -> Result<ParsedExpression<'_>, EvalError> {
+    parse_with_options(text, &EvalOptions::default())
+}
+
+/// Parse expression text into a reusable parsed expression.
+///
+/// The returned [`ParsedExpression`] hides the internal AST and can be evaluated
+/// repeatedly by APIs that accept parsed expressions.
+///
+/// # Errors
+///
+/// Returns [`EvalError::ResourceLimit`] when `text`, token count, AST size,
+/// depth, function arity, or parser recovery count exceeds `options`.
+/// Parser and lexer errors are returned unchanged.
+pub fn parse_with_options<'input>(
+    text: &'input str,
+    options: &EvalOptions,
+) -> Result<ParsedExpression<'input>, EvalError> {
+    if text.len() > options.max_input_bytes {
+        return Err(EvalError::ResourceLimit(
+            ResourceLimitError::InputTooLarge {
+                actual: text.len(),
+                max: options.max_input_bytes,
+            },
+        ));
+    }
+
+    let lexer = lexer::Lexer::new(text);
+    let ast = parse_tokens_with_options(lexer, options)?;
+    Ok(ParsedExpression::new(ast))
+}
+
+/// Evaluate a previously parsed expression with a resolver.
+///
+/// # Examples
+///
+/// ```
+/// use shunting_yard::{evaluate_parsed, parse, EvalError, Value};
+///
+/// let parsed = parse("x + 2")?;
+///
+/// let value = evaluate_parsed(&parsed, |name: &str| match name {
+///     "x" => Ok(Value::Integer(40)),
+///     other => Err(EvalError::UnknownVariable(other.to_owned())),
+/// })?;
+///
+/// assert_eq!(value, Value::Integer(42));
+/// # Ok::<(), EvalError>(())
+/// ```
+///
+/// # Errors
+///
+/// Returns resolver or evaluation errors from the parsed expression.
+pub fn evaluate_parsed<R>(parsed: &ParsedExpression<'_>, resolver: R) -> Result<Value, EvalError>
+where
+    R: VariableResolver,
+{
+    eval::eval(&parsed.ast, resolver)
 }
 
 /// Parse and evaluate an expression string.
@@ -417,17 +495,8 @@ pub fn evaluate_with_options_and_resolver<R>(
 where
     R: VariableResolver,
 {
-    if text.len() > options.max_input_bytes {
-        return Err(EvalError::ResourceLimit(
-            ResourceLimitError::InputTooLarge {
-                actual: text.len(),
-                max: options.max_input_bytes,
-            },
-        ));
-    }
-
-    let lexer = lexer::Lexer::new(text);
-    evaluate_tokens_with_options_and_resolver(lexer, resolver, options)
+    let parsed = parse_with_options(text, options)?;
+    evaluate_parsed(&parsed, resolver)
 }
 
 #[cfg(test)]
@@ -441,6 +510,7 @@ where
     evaluate_tokens_with_options_and_resolver(tokens, variables, &EvalOptions::default())
 }
 
+#[cfg(test)]
 fn evaluate_tokens_with_options_and_resolver<'input, Tokens, R>(
     tokens: Tokens,
     resolver: R,
@@ -449,6 +519,17 @@ fn evaluate_tokens_with_options_and_resolver<'input, Tokens, R>(
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
     R: VariableResolver,
+{
+    let ast = parse_tokens_with_options(tokens, options)?;
+    eval::eval(&ast, resolver)
+}
+
+fn parse_tokens_with_options<'input, Tokens>(
+    tokens: Tokens,
+    options: &EvalOptions,
+) -> Result<ast::Expression<'input>, EvalError>
+where
+    Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
 {
     let parser = calc::ExpressionParser::new();
     let mut checked_tokens = Vec::new();
@@ -492,7 +573,7 @@ where
             }
 
             validate_ast_limits(&ast, options)?;
-            eval::eval(&ast, resolver)
+            Ok(*ast)
         }
         Err(_) => Err(EvalError::ParserError),
     }
@@ -668,6 +749,162 @@ mod tests {
             evaluate_tokens(tokens, &variables),
             Err(EvalError::LexicalError(tokens::LexicalError::InvalidToken))
         );
+    }
+
+    #[test]
+    fn parse_accepts_valid_expression() {
+        assert!(parse("x + 2").is_ok());
+    }
+
+    #[test]
+    fn parse_reports_lexical_error() {
+        assert!(matches!(parse("$"), Err(EvalError::LexicalError(_))));
+    }
+
+    #[test]
+    fn parse_reports_parser_recovery() {
+        assert!(matches!(
+            parse("1 +"),
+            Err(EvalError::ParserRecovery { count: 1 })
+        ));
+    }
+
+    #[test]
+    fn parse_with_options_enforces_resource_limits() {
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options("1 + 2", &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::InputTooLarge { actual: 5, max: 1 }
+            ))
+        ));
+
+        let options = EvalOptions {
+            max_tokens: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options("1 + 2", &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyTokens { actual: 2, max: 1 }
+            ))
+        ));
+
+        let options = EvalOptions {
+            max_ast_nodes: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options("1 + 2", &options),
+            Err(EvalError::ResourceLimit(ResourceLimitError::AstTooLarge {
+                actual: 2,
+                max: 1,
+            }))
+        ));
+
+        let options = EvalOptions {
+            max_depth: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options("!!true", &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::ExpressionTooDeep { actual: 2, max: 1 }
+            ))
+        ));
+
+        let options = EvalOptions {
+            max_function_args: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options("min(1, 2)", &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyFunctionArguments { actual: 2, max: 1 }
+            ))
+        ));
+
+        let options = EvalOptions {
+            max_parser_recoveries: 0,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options("1 +", &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyParserRecoveries { actual: 1, max: 0 }
+            ))
+        ));
+    }
+
+    #[test]
+    fn parsed_expression_can_be_evaluated_with_different_maps() {
+        let parsed = match parse("x + 1") {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("unexpected parse error: {error:?}"),
+        };
+
+        let mut first = HashMap::new();
+        first.insert("x".to_owned(), Value::Integer(1));
+
+        let mut second = HashMap::new();
+        second.insert("x".to_owned(), Value::Integer(41));
+
+        assert_eq!(evaluate_parsed(&parsed, &first), Ok(Value::Integer(2)));
+        assert_eq!(evaluate_parsed(&parsed, &second), Ok(Value::Integer(42)));
+    }
+
+    #[test]
+    fn parsed_expression_can_be_evaluated_with_callback() {
+        let parsed = match parse("x + 1") {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("unexpected parse error: {error:?}"),
+        };
+
+        let result = evaluate_parsed(&parsed, |name: &str| match name {
+            "x" => Ok(Value::Integer(41)),
+            other => Err(EvalError::UnknownVariable(other.to_owned())),
+        });
+
+        assert_eq!(result, Ok(Value::Integer(42)));
+    }
+
+    #[test]
+    fn parsed_expression_can_be_evaluated_with_named_resolver() {
+        struct RuntimeResolver;
+
+        impl VariableResolver for RuntimeResolver {
+            fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+                match name {
+                    "x" => Ok(Value::Integer(40)),
+                    other => Err(EvalError::UnknownVariable(other.to_owned())),
+                }
+            }
+        }
+
+        let parsed = match parse("x + 2") {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("unexpected parse error: {error:?}"),
+        };
+
+        assert_eq!(
+            evaluate_parsed(&parsed, RuntimeResolver),
+            Ok(Value::Integer(42))
+        );
+    }
+
+    #[test]
+    fn evaluate_parsed_rejects_invalid_resolver_float() {
+        let parsed = match parse("x") {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("unexpected parse error: {error:?}"),
+        };
+
+        let result = evaluate_parsed(&parsed, |_name: &str| Ok(Value::Float(f64::INFINITY)));
+
+        assert_eq!(result, Err(EvalError::NonFiniteFloat));
     }
 
     #[test]
@@ -1263,6 +1500,24 @@ mod tests {
             });
 
             prop_assert_eq!(callback_result, evaluate(&expression, &variables));
+        }
+
+        #[test]
+        fn prop_parse_then_eval_matches_evaluate(
+            name in variable_name(),
+            value in -1_000_000i64..1_000_000,
+            addend in -1_000_000i64..1_000_000,
+        ) {
+            let expression = format!("{name} + {addend}");
+            let mut variables = HashMap::new();
+            variables.insert(name.clone(), Value::Integer(value));
+
+            let parsed = parse(&expression)
+                .map_err(|error| TestCaseError::fail(format!("parse failed: {error:?}")))?;
+            let parse_then_eval = evaluate_parsed(&parsed, &variables);
+            let direct = evaluate(&expression, &variables);
+
+            prop_assert_eq!(parse_then_eval, direct);
         }
 
         #[test]
