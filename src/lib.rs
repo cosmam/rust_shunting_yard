@@ -517,6 +517,22 @@ where
     eval::eval(&parsed.ast, resolver)
 }
 
+/// Evaluate a previously parsed expression with a resolver and return a
+/// top-level diagnostic error.
+///
+/// # Errors
+///
+/// Returns [`Error::Eval`] when resolver lookup or expression evaluation fails.
+pub fn evaluate_parsed_detailed<R>(
+    parsed: &ParsedExpression<'_>,
+    resolver: R,
+) -> Result<Value, Error>
+where
+    R: VariableResolver,
+{
+    eval::eval(&parsed.ast, resolver).map_err(Error::Eval)
+}
+
 /// Parse and evaluate an expression string.
 ///
 /// # Arguments
@@ -535,6 +551,31 @@ where
 /// invalid operations, are returned unchanged.
 pub fn evaluate(text: &str, variables: &HashMap<String, Value>) -> Result<Value, EvalError> {
     evaluate_with_options(text, variables, &EvalOptions::default())
+}
+
+/// Parse and evaluate an expression string with diagnostic-aware errors.
+///
+/// This map-backed entrypoint is the diagnostic-aware counterpart to
+/// [`evaluate`].
+///
+/// # Examples
+///
+/// ```
+/// use shunting_yard::{evaluate_detailed, Error, EvalError};
+/// use std::collections::HashMap;
+///
+/// let variables = HashMap::new();
+/// let error = evaluate_detailed("1 / 0", &variables);
+///
+/// assert_eq!(error, Err(Error::Eval(EvalError::DivisionByZero)));
+/// ```
+///
+/// # Errors
+///
+/// Returns [`Error::ResourceLimit`], [`Error::Lexical`], [`Error::Parse`], or
+/// [`Error::Eval`] according to the stage that failed.
+pub fn evaluate_detailed(text: &str, variables: &HashMap<String, Value>) -> Result<Value, Error> {
+    evaluate_with_options_and_resolver_detailed(text, variables, &EvalOptions::default())
 }
 
 /// Parse and evaluate an expression string with a custom variable resolver.
@@ -605,6 +646,24 @@ where
     evaluate_with_options_and_resolver(text, resolver, &EvalOptions::default())
 }
 
+/// Parse and evaluate an expression string with a custom variable resolver and
+/// diagnostic-aware errors.
+///
+/// This is the default-limited diagnostic entrypoint for named
+/// [`VariableResolver`] implementations. Closures also implement
+/// [`VariableResolver`] and can be passed directly.
+///
+/// # Errors
+///
+/// Returns [`Error::ResourceLimit`], [`Error::Lexical`], [`Error::Parse`], or
+/// [`Error::Eval`] according to the stage that failed.
+pub fn evaluate_with_resolver_detailed<R>(text: &str, resolver: R) -> Result<Value, Error>
+where
+    R: VariableResolver,
+{
+    evaluate_with_options_and_resolver_detailed(text, resolver, &EvalOptions::default())
+}
+
 /// Parse and evaluate an expression string with explicit resource limits.
 ///
 /// This map-backed entrypoint preserves the original public API while routing
@@ -669,6 +728,28 @@ where
 {
     let parsed = parse_with_options(text, options)?;
     evaluate_parsed(&parsed, resolver)
+}
+
+/// Parse and evaluate an expression string with explicit resource limits and
+/// diagnostic-aware errors.
+///
+/// This is the most general diagnostic-aware entrypoint: callers provide both
+/// resource limits and the variable resolution strategy.
+///
+/// # Errors
+///
+/// Returns [`Error::ResourceLimit`], [`Error::Lexical`], [`Error::Parse`], or
+/// [`Error::Eval`] according to the stage that failed.
+pub fn evaluate_with_options_and_resolver_detailed<R>(
+    text: &str,
+    resolver: R,
+    options: &EvalOptions,
+) -> Result<Value, Error>
+where
+    R: VariableResolver,
+{
+    let parsed = parse_with_options_detailed(text, options)?;
+    evaluate_parsed_detailed(&parsed, resolver)
 }
 
 #[cfg(test)]
@@ -1357,6 +1438,116 @@ mod tests {
         let result = evaluate_parsed(&parsed, |_name: &str| Ok(Value::Float(f64::INFINITY)));
 
         assert_eq!(result, Err(EvalError::NonFiniteFloat));
+    }
+
+    #[test]
+    fn evaluate_parsed_detailed_rejects_invalid_resolver_float() {
+        let parsed = match parse("x") {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("unexpected parse error: {error:?}"),
+        };
+
+        let result =
+            evaluate_parsed_detailed(&parsed, |_name: &str| Ok(Value::Float(f64::INFINITY)));
+
+        assert_eq!(result, Err(Error::Eval(EvalError::NonFiniteFloat)));
+    }
+
+    #[test]
+    fn evaluate_detailed_wraps_eval_errors() {
+        let variables = HashMap::new();
+
+        assert_eq!(
+            evaluate_detailed("1 / 0", &variables),
+            Err(Error::Eval(EvalError::DivisionByZero))
+        );
+    }
+
+    #[test]
+    fn evaluate_with_resolver_detailed_accepts_callbacks() {
+        let result = evaluate_with_resolver_detailed("x + 2", |name: &str| match name {
+            "x" => Ok(Value::Integer(40)),
+            other => Err(EvalError::UnknownVariable(other.to_owned())),
+        });
+
+        assert_eq!(result, Ok(Value::Integer(42)));
+    }
+
+    #[test]
+    fn evaluate_with_resolver_detailed_accepts_named_resolver_type() {
+        struct RuntimeResolver;
+
+        impl VariableResolver for RuntimeResolver {
+            fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+                match name {
+                    "x" => Ok(Value::Integer(40)),
+                    other => Err(EvalError::UnknownVariable(other.to_owned())),
+                }
+            }
+        }
+
+        assert_eq!(
+            evaluate_with_resolver_detailed("x + 2", RuntimeResolver),
+            Ok(Value::Integer(42))
+        );
+    }
+
+    #[test]
+    fn evaluate_with_options_and_resolver_detailed_preserves_error_stage() {
+        use std::cell::Cell;
+
+        let called = Cell::new(false);
+        let mut resolver = |_name: &str| {
+            called.set(true);
+            Ok(Value::Integer(0))
+        };
+
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+
+        assert_eq!(
+            evaluate_with_options_and_resolver_detailed("1 + 2", &mut resolver, &options),
+            Err(Error::ResourceLimit(ResourceLimitError::InputTooLarge {
+                actual: 5,
+                max: 1,
+            }))
+        );
+        assert!(!called.get());
+
+        assert!(matches!(
+            evaluate_with_options_and_resolver_detailed(
+                "$",
+                &mut resolver,
+                &EvalOptions::default()
+            ),
+            Err(Error::Lexical {
+                span: SourceSpan { start: 0, end: 1 },
+                ..
+            })
+        ));
+        assert!(!called.get());
+
+        assert!(matches!(
+            evaluate_with_options_and_resolver_detailed(
+                "1 +",
+                &mut resolver,
+                &EvalOptions::default()
+            ),
+            Err(Error::Parse(_))
+        ));
+        assert!(!called.get());
+
+        assert_eq!(
+            evaluate_with_options_and_resolver_detailed(
+                "x",
+                &mut resolver,
+                &EvalOptions::default()
+            ),
+            Ok(Value::Integer(0))
+        );
+        assert!(called.get());
     }
 
     #[test]
