@@ -291,6 +291,18 @@ impl ParseDiagnostics {
             .filter(|diagnostic| matches!(diagnostic.kind, ParseDiagnosticKind::Recovery { .. }))
             .count()
     }
+
+    fn into_legacy_eval_error(self) -> EvalError {
+        let recovery_count = self.recovery_count();
+
+        if recovery_count > 0 {
+            EvalError::ParserRecovery {
+                count: recovery_count,
+            }
+        } else {
+            EvalError::ParserError
+        }
+    }
 }
 
 /// Top-level error returned by diagnostic-aware APIs.
@@ -402,6 +414,17 @@ pub enum EvalError {
     UnknownVariable(String),
 }
 
+impl From<Error> for EvalError {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::ResourceLimit(error) => EvalError::ResourceLimit(error),
+            Error::Lexical { error, .. } => EvalError::LexicalError(error),
+            Error::Parse(diagnostics) => diagnostics.into_legacy_eval_error(),
+            Error::Eval(error) => error,
+        }
+    }
+}
+
 /// Parse expression text using default evaluation options.
 ///
 /// # Errors
@@ -447,18 +470,7 @@ pub fn parse_with_options<'input>(
     text: &'input str,
     options: &EvalOptions,
 ) -> Result<ParsedExpression<'input>, EvalError> {
-    if text.len() > options.max_input_bytes {
-        return Err(EvalError::ResourceLimit(
-            ResourceLimitError::InputTooLarge {
-                actual: text.len(),
-                max: options.max_input_bytes,
-            },
-        ));
-    }
-
-    let lexer = lexer::Lexer::new(text);
-    let ast = parse_tokens_with_options(lexer, options)?;
-    Ok(ParsedExpression::new(ast))
+    parse_with_options_detailed(text, options).map_err(EvalError::from)
 }
 
 /// Parse expression text into a reusable parsed expression and return
@@ -726,8 +738,7 @@ pub fn evaluate_with_options_and_resolver<R>(
 where
     R: VariableResolver,
 {
-    let parsed = parse_with_options(text, options)?;
-    evaluate_parsed(&parsed, resolver)
+    evaluate_with_options_and_resolver_detailed(text, resolver, options).map_err(EvalError::from)
 }
 
 /// Parse and evaluate an expression string with explicit resource limits and
@@ -777,6 +788,7 @@ where
     eval::eval(&ast, resolver)
 }
 
+#[cfg(test)]
 fn parse_tokens_with_options<'input, Tokens>(
     tokens: Tokens,
     options: &EvalOptions,
@@ -784,52 +796,7 @@ fn parse_tokens_with_options<'input, Tokens>(
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
 {
-    let parser = calc::ExpressionParser::new();
-    let mut checked_tokens = Vec::new();
-
-    for token in tokens {
-        if checked_tokens.len() >= options.max_tokens {
-            return Err(EvalError::ResourceLimit(
-                ResourceLimitError::TooManyTokens {
-                    actual: checked_tokens.len() + 1,
-                    max: options.max_tokens,
-                },
-            ));
-        }
-
-        match token {
-            Ok((_, tokens::Token::Error(error), _)) | Err(error) => {
-                return Err(EvalError::LexicalError(error));
-            }
-            Ok(token) => checked_tokens.push(Ok(token)),
-        }
-    }
-
-    let mut errors = Vec::new();
-    let result = parser.parse(&mut errors, checked_tokens);
-
-    match result {
-        Ok(ast) => {
-            if !errors.is_empty() {
-                if errors.len() > options.max_parser_recoveries {
-                    return Err(EvalError::ResourceLimit(
-                        ResourceLimitError::TooManyParserRecoveries {
-                            actual: errors.len(),
-                            max: options.max_parser_recoveries,
-                        },
-                    ));
-                }
-
-                return Err(EvalError::ParserRecovery {
-                    count: errors.len(),
-                });
-            }
-
-            validate_ast_limits(&ast, options)?;
-            Ok(*ast)
-        }
-        Err(_) => Err(EvalError::ParserError),
-    }
+    parse_tokens_with_options_detailed(tokens, options).map_err(EvalError::from)
 }
 
 fn parse_tokens_with_options_detailed<'input, Tokens>(
@@ -1192,6 +1159,51 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_errors_convert_to_legacy_eval_errors() {
+        assert_eq!(
+            EvalError::from(Error::ResourceLimit(ResourceLimitError::TooManyTokens {
+                actual: 2,
+                max: 1,
+            })),
+            EvalError::ResourceLimit(ResourceLimitError::TooManyTokens { actual: 2, max: 1 })
+        );
+        assert_eq!(
+            EvalError::from(Error::Lexical {
+                span: SourceSpan::new(0, 1),
+                error: LexicalError::InvalidToken,
+            }),
+            EvalError::LexicalError(LexicalError::InvalidToken)
+        );
+        assert_eq!(
+            EvalError::from(Error::Parse(ParseDiagnostics {
+                diagnostics: vec![ParseDiagnostic {
+                    span: Some(SourceSpan::new(0, 1)),
+                    kind: ParseDiagnosticKind::InvalidToken,
+                }],
+            })),
+            EvalError::ParserError
+        );
+        assert_eq!(
+            EvalError::from(Error::Parse(ParseDiagnostics {
+                diagnostics: vec![ParseDiagnostic {
+                    span: Some(SourceSpan::new(2, 2)),
+                    kind: ParseDiagnosticKind::Recovery {
+                        dropped_tokens: Vec::new(),
+                        cause: Box::new(ParseDiagnosticKind::UnrecognizedEof {
+                            expected: vec!["Integer".to_owned()],
+                        }),
+                    },
+                }],
+            })),
+            EvalError::ParserRecovery { count: 1 }
+        );
+        assert_eq!(
+            EvalError::from(Error::Eval(EvalError::DivisionByZero)),
+            EvalError::DivisionByZero
+        );
+    }
+
+    #[test]
     fn parse_accepts_valid_expression() {
         assert!(parse("x + 2").is_ok());
     }
@@ -1199,6 +1211,26 @@ mod tests {
     #[test]
     fn parse_reports_lexical_error() {
         assert!(matches!(parse("$"), Err(EvalError::LexicalError(_))));
+    }
+
+    #[test]
+    fn legacy_parse_still_maps_detailed_errors_to_eval_error() {
+        assert!(matches!(parse("$"), Err(EvalError::LexicalError(_))));
+        assert!(matches!(
+            parse("1 +"),
+            Err(EvalError::ParserRecovery { count: 1 })
+        ));
+
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options("1 + 2", &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::InputTooLarge { actual: 5, max: 1 }
+            ))
+        ));
     }
 
     #[test]
@@ -2161,6 +2193,23 @@ mod tests {
             let direct = evaluate(&expression, &variables);
 
             prop_assert_eq!(parse_then_eval, direct);
+        }
+
+        #[test]
+        fn prop_detailed_and_legacy_evaluate_match_for_valid_inputs(
+            name in variable_name(),
+            value in -1_000_000i64..1_000_000,
+            addend in -1_000_000i64..1_000_000,
+        ) {
+            let expression = format!("{name} + {addend}");
+            let mut variables = HashMap::new();
+            variables.insert(name.clone(), Value::Integer(value));
+
+            let legacy = evaluate(&expression, &variables);
+            let detailed = evaluate_detailed(&expression, &variables)
+                .map_err(EvalError::from);
+
+            prop_assert_eq!(legacy, detailed);
         }
 
         #[test]
