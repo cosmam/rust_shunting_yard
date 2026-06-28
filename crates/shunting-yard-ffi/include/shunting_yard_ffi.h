@@ -13,6 +13,7 @@ typedef enum ShyStatus {
     SHY_STATUS_INVALID_UTF8 = 2,
     SHY_STATUS_EVALUATION_ERROR = 3,
     SHY_STATUS_PANIC = 4,
+    SHY_STATUS_RESOLVER_ERROR = 5,
     SHY_STATUS_INVALID_VALUE = 6,
 } ShyStatus;
 
@@ -29,8 +30,21 @@ typedef struct ShyValue {
     double float_value;
 } ShyValue;
 
+typedef ShyStatus (*ShyVariableResolver)(
+    const char *name,
+    void *user_data,
+    ShyValue *out_value
+);
+
 ShyStatus shy_evaluate_no_vars(
     const char *expression,
+    ShyValue *out_value
+);
+
+ShyStatus shy_evaluate_with_callback(
+    const char *expression,
+    ShyVariableResolver resolver,
+    void *user_data,
     ShyValue *out_value
 );
 

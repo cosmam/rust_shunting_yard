@@ -118,7 +118,10 @@ target.
 - FFI exported functions must not unwind across the ABI boundary;
 - C smoke tests must pass in CI;
 - Rust-side FFI tests must cover null pointers, invalid UTF-8, success, and
-  evaluation failure.
+  evaluation failure;
+- callback resolver tests must cover null callback pointers, callback-provided
+  bool/integer/float values, `user_data`, repeated lookup, callback failure,
+  invalid value kinds, and invalid callback-provided floats.
 
 ## Current Policy Notes
 

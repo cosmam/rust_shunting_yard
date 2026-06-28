@@ -3,7 +3,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::collections::HashMap;
-use std::ffi::{CStr, c_char};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Status code returned by FFI functions.
@@ -20,6 +20,8 @@ pub enum ShyStatus {
     EvaluationError = 3,
     /// A Rust panic was caught before crossing the ABI boundary.
     Panic = 4,
+    /// A variable resolver callback failed to provide a value.
+    ResolverError = 5,
     /// The callback returned a value kind that is not recognized.
     InvalidValue = 6,
 }
@@ -57,6 +59,26 @@ pub struct ShyValue {
     pub float_value: f64,
 }
 
+/// C callback used to resolve variable names during evaluation.
+///
+/// The callback receives a NUL-terminated variable name that is valid only for
+/// the duration of the call, the caller-provided `user_data` pointer, and a
+/// writable output slot. Callback implementations must not unwind across the C
+/// ABI boundary.
+pub type ShyVariableResolver = Option<
+    unsafe extern "C" fn(
+        name: *const c_char,
+        user_data: *mut c_void,
+        out_value: *mut ShyValue,
+    ) -> ShyStatus,
+>;
+
+type ShyVariableResolverCallback = unsafe extern "C" fn(
+    name: *const c_char,
+    user_data: *mut c_void,
+    out_value: *mut ShyValue,
+) -> ShyStatus;
+
 impl ShyValue {
     fn from_value(value: shunting_yard::Value) -> Self {
         match value {
@@ -82,6 +104,52 @@ impl ShyValue {
     }
 }
 
+struct FfiResolver {
+    callback: ShyVariableResolverCallback,
+    user_data: *mut c_void,
+    last_status: Option<ShyStatus>,
+}
+
+impl FfiResolver {
+    fn resolve_callback(
+        &mut self,
+        name: &str,
+    ) -> Result<shunting_yard::Value, shunting_yard::EvalError> {
+        let ffi_name =
+            CString::new(name).map_err(|_| shunting_yard::EvalError::InvalidExpression)?;
+
+        let mut out_value = ShyValue {
+            kind: SHY_VALUE_INTEGER,
+            bool_value: 0,
+            integer_value: 0,
+            float_value: 0.0,
+        };
+
+        // SAFETY:
+        // - callback was checked non-null before FfiResolver was constructed.
+        // - ffi_name.as_ptr() is valid and NUL-terminated for the duration of the call.
+        // - user_data is caller-provided and passed through without dereferencing.
+        // - out_value points to valid writable storage for one ShyValue.
+        let status = unsafe { (self.callback)(ffi_name.as_ptr(), self.user_data, &mut out_value) };
+
+        if status != ShyStatus::Ok {
+            self.last_status = Some(status);
+            return Err(shunting_yard::EvalError::UnknownVariable(name.to_owned()));
+        }
+
+        shunting_yard::Value::try_from(out_value).map_err(|status| {
+            self.last_status = Some(status);
+            shunting_yard::EvalError::InvalidExpression
+        })
+    }
+}
+
+impl shunting_yard::VariableResolver for &mut FfiResolver {
+    fn resolve(&mut self, name: &str) -> Result<shunting_yard::Value, shunting_yard::EvalError> {
+        self.resolve_callback(name)
+    }
+}
+
 impl TryFrom<ShyValue> for shunting_yard::Value {
     type Error = ShyStatus;
 
@@ -101,6 +169,23 @@ fn evaluate_no_vars_impl(expression: &str) -> Result<ShyValue, ShyStatus> {
     shunting_yard::evaluate_detailed(expression, &variables)
         .map(ShyValue::from_value)
         .map_err(|_error| ShyStatus::EvaluationError)
+}
+
+fn evaluate_with_callback_impl(
+    expression: &str,
+    callback: ShyVariableResolverCallback,
+    user_data: *mut c_void,
+) -> Result<ShyValue, ShyStatus> {
+    let mut resolver = FfiResolver {
+        callback,
+        user_data,
+        last_status: None,
+    };
+
+    match shunting_yard::evaluate_with_resolver_detailed(expression, &mut resolver) {
+        Ok(value) => Ok(ShyValue::from_value(value)),
+        Err(_error) => Err(resolver.last_status.unwrap_or(ShyStatus::EvaluationError)),
+    }
 }
 
 fn ffi_boundary<F>(f: F) -> ShyStatus
@@ -142,6 +227,55 @@ pub unsafe extern "C" fn shy_evaluate_no_vars(
         };
 
         match evaluate_no_vars_impl(expression) {
+            Ok(value) => {
+                // SAFETY:
+                // - out_value was checked for null above.
+                // - caller must provide valid writable storage for ShyValue.
+                unsafe { out_value.write(value) };
+                ShyStatus::Ok
+            }
+            Err(status) => status,
+        }
+    })
+}
+
+/// Evaluate an expression using a C callback for variable lookup.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `resolver` must be null or a valid function
+/// pointer that follows the [`ShyVariableResolver`] contract. `user_data` is
+/// caller-owned and is passed through without being dereferenced. `out_value`
+/// must be null or point to valid, writable storage for one [`ShyValue`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_with_callback(
+    expression: *const c_char,
+    resolver: ShyVariableResolver,
+    user_data: *mut c_void,
+    out_value: *mut ShyValue,
+) -> ShyStatus {
+    ffi_boundary(|| {
+        if expression.is_null() || out_value.is_null() {
+            return ShyStatus::NullPointer;
+        }
+
+        let Some(resolver) = resolver else {
+            return ShyStatus::NullPointer;
+        };
+
+        // SAFETY:
+        // - expression was checked for null above.
+        // - caller must provide a valid NUL-terminated C string.
+        // - CStr does not take ownership of the pointer.
+        let expression = unsafe { CStr::from_ptr(expression) };
+
+        let expression = match expression.to_str() {
+            Ok(expression) => expression,
+            Err(_) => return ShyStatus::InvalidUtf8,
+        };
+
+        match evaluate_with_callback_impl(expression, resolver, user_data) {
             Ok(value) => {
                 // SAFETY:
                 // - out_value was checked for null above.
