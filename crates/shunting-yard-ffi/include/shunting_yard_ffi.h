@@ -115,11 +115,41 @@ ShyStatus shy_evaluate_no_vars(
     ShyValue *out_value
 );
 
+/*
+ * Extended no-variable evaluation.
+ *
+ * If out_error is not NULL, *out_error is set to NULL on success. On failure,
+ * *out_error receives an owned ShyError that must be released with
+ * shy_error_free. Passing out_error as NULL is allowed and disables error
+ * object allocation.
+ */
+ShyStatus shy_evaluate_no_vars_ex(
+    const char *expression,
+    ShyValue *out_value,
+    ShyError **out_error
+);
+
 ShyStatus shy_evaluate_with_callback(
     const char *expression,
     ShyVariableResolver resolver,
     void *user_data,
     ShyValue *out_value
+);
+
+/*
+ * Extended callback-backed evaluation.
+ *
+ * If out_error is not NULL, *out_error is set to NULL on success. On failure,
+ * *out_error receives an owned ShyError that must be released with
+ * shy_error_free. Passing out_error as NULL is allowed and disables error
+ * object allocation.
+ */
+ShyStatus shy_evaluate_with_callback_ex(
+    const char *expression,
+    ShyVariableResolver resolver,
+    void *user_data,
+    ShyValue *out_value,
+    ShyError **out_error
 );
 
 /*
