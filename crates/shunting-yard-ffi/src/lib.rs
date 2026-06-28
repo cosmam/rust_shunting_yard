@@ -7,24 +7,22 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Status code returned by FFI functions.
-#[repr(i32)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShyStatus {
-    /// Operation completed successfully.
-    Ok = 0,
-    /// A required pointer argument was null.
-    NullPointer = 1,
-    /// The input C string was not valid UTF-8.
-    InvalidUtf8 = 2,
-    /// Parsing or evaluation failed.
-    EvaluationError = 3,
-    /// A Rust panic was caught before crossing the ABI boundary.
-    Panic = 4,
-    /// A variable resolver callback failed to provide a value.
-    ResolverError = 5,
-    /// The callback returned a value kind that is not recognized.
-    InvalidValue = 6,
-}
+pub type ShyStatus = i32;
+
+/// Operation completed successfully.
+pub const SHY_STATUS_OK: ShyStatus = 0;
+/// A required pointer argument was null.
+pub const SHY_STATUS_NULL_POINTER: ShyStatus = 1;
+/// The input C string was not valid UTF-8.
+pub const SHY_STATUS_INVALID_UTF8: ShyStatus = 2;
+/// Parsing or evaluation failed.
+pub const SHY_STATUS_EVALUATION_ERROR: ShyStatus = 3;
+/// A Rust panic was caught before crossing the ABI boundary.
+pub const SHY_STATUS_PANIC: ShyStatus = 4;
+/// A variable resolver callback failed to provide a value.
+pub const SHY_STATUS_RESOLVER_ERROR: ShyStatus = 5;
+/// The callback returned a value kind that is not recognized.
+pub const SHY_STATUS_INVALID_VALUE: ShyStatus = 6;
 
 /// Boolean value kind at the C ABI boundary.
 pub const SHY_VALUE_BOOL: i32 = 0;
@@ -79,6 +77,19 @@ type ShyVariableResolverCallback = unsafe extern "C" fn(
     out_value: *mut ShyValue,
 ) -> ShyStatus;
 
+fn status_from_code(code: ShyStatus) -> ShyStatus {
+    match code {
+        SHY_STATUS_OK
+        | SHY_STATUS_NULL_POINTER
+        | SHY_STATUS_INVALID_UTF8
+        | SHY_STATUS_EVALUATION_ERROR
+        | SHY_STATUS_PANIC
+        | SHY_STATUS_RESOLVER_ERROR
+        | SHY_STATUS_INVALID_VALUE => code,
+        _ => SHY_STATUS_RESOLVER_ERROR,
+    }
+}
+
 impl ShyValue {
     fn from_value(value: shunting_yard::Value) -> Self {
         match value {
@@ -132,7 +143,8 @@ impl FfiResolver {
         // - out_value points to valid writable storage for one ShyValue.
         let status = unsafe { (self.callback)(ffi_name.as_ptr(), self.user_data, &mut out_value) };
 
-        if status != ShyStatus::Ok {
+        let status = status_from_code(status);
+        if status != SHY_STATUS_OK {
             self.last_status = Some(status);
             return Err(shunting_yard::EvalError::UnknownVariable(name.to_owned()));
         }
@@ -158,7 +170,7 @@ impl TryFrom<ShyValue> for shunting_yard::Value {
             SHY_VALUE_BOOL => Ok(shunting_yard::Value::Bool(value.bool_value != 0)),
             SHY_VALUE_INTEGER => Ok(shunting_yard::Value::Integer(value.integer_value)),
             SHY_VALUE_FLOAT => Ok(shunting_yard::Value::Float(value.float_value)),
-            _ => Err(ShyStatus::InvalidValue),
+            _ => Err(SHY_STATUS_INVALID_VALUE),
         }
     }
 }
@@ -168,7 +180,7 @@ fn evaluate_no_vars_impl(expression: &str) -> Result<ShyValue, ShyStatus> {
 
     shunting_yard::evaluate_detailed(expression, &variables)
         .map(ShyValue::from_value)
-        .map_err(|_error| ShyStatus::EvaluationError)
+        .map_err(|_error| SHY_STATUS_EVALUATION_ERROR)
 }
 
 fn evaluate_with_callback_impl(
@@ -184,7 +196,7 @@ fn evaluate_with_callback_impl(
 
     match shunting_yard::evaluate_with_resolver_detailed(expression, &mut resolver) {
         Ok(value) => Ok(ShyValue::from_value(value)),
-        Err(_error) => Err(resolver.last_status.unwrap_or(ShyStatus::EvaluationError)),
+        Err(_error) => Err(resolver.last_status.unwrap_or(SHY_STATUS_EVALUATION_ERROR)),
     }
 }
 
@@ -194,7 +206,7 @@ where
 {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(status) => status,
-        Err(_) => ShyStatus::Panic,
+        Err(_) => SHY_STATUS_PANIC,
     }
 }
 
@@ -212,7 +224,7 @@ pub unsafe extern "C" fn shy_evaluate_no_vars(
 ) -> ShyStatus {
     ffi_boundary(|| {
         if expression.is_null() || out_value.is_null() {
-            return ShyStatus::NullPointer;
+            return SHY_STATUS_NULL_POINTER;
         }
 
         // SAFETY:
@@ -223,7 +235,7 @@ pub unsafe extern "C" fn shy_evaluate_no_vars(
 
         let expression = match expression.to_str() {
             Ok(expression) => expression,
-            Err(_) => return ShyStatus::InvalidUtf8,
+            Err(_) => return SHY_STATUS_INVALID_UTF8,
         };
 
         match evaluate_no_vars_impl(expression) {
@@ -232,7 +244,7 @@ pub unsafe extern "C" fn shy_evaluate_no_vars(
                 // - out_value was checked for null above.
                 // - caller must provide valid writable storage for ShyValue.
                 unsafe { out_value.write(value) };
-                ShyStatus::Ok
+                SHY_STATUS_OK
             }
             Err(status) => status,
         }
@@ -257,11 +269,11 @@ pub unsafe extern "C" fn shy_evaluate_with_callback(
 ) -> ShyStatus {
     ffi_boundary(|| {
         if expression.is_null() || out_value.is_null() {
-            return ShyStatus::NullPointer;
+            return SHY_STATUS_NULL_POINTER;
         }
 
         let Some(resolver) = resolver else {
-            return ShyStatus::NullPointer;
+            return SHY_STATUS_NULL_POINTER;
         };
 
         // SAFETY:
@@ -272,7 +284,7 @@ pub unsafe extern "C" fn shy_evaluate_with_callback(
 
         let expression = match expression.to_str() {
             Ok(expression) => expression,
-            Err(_) => return ShyStatus::InvalidUtf8,
+            Err(_) => return SHY_STATUS_INVALID_UTF8,
         };
 
         match evaluate_with_callback_impl(expression, resolver, user_data) {
@@ -281,7 +293,7 @@ pub unsafe extern "C" fn shy_evaluate_with_callback(
                 // - out_value was checked for null above.
                 // - caller must provide valid writable storage for ShyValue.
                 unsafe { out_value.write(value) };
-                ShyStatus::Ok
+                SHY_STATUS_OK
             }
             Err(status) => status,
         }
@@ -296,7 +308,7 @@ mod tests {
     fn ffi_boundary_converts_panic_to_status() {
         let status = ffi_boundary(|| panic!("intentional test panic"));
 
-        assert_eq!(status, ShyStatus::Panic);
+        assert_eq!(status, SHY_STATUS_PANIC);
     }
 
     #[test]
@@ -339,7 +351,7 @@ mod tests {
                 integer_value: 0,
                 float_value: 0.0,
             }),
-            Err(ShyStatus::InvalidValue)
+            Err(SHY_STATUS_INVALID_VALUE)
         );
     }
 }

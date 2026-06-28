@@ -84,6 +84,18 @@ static ShyStatus invalid_kind_resolver(
     return SHY_STATUS_OK;
 }
 
+static ShyStatus invalid_status_resolver(
+    const char *name,
+    void *user_data,
+    ShyValue *out_value
+) {
+    (void)name;
+    (void)user_data;
+    (void)out_value;
+
+    return 999;
+}
+
 static void test_integer_success(void) {
     ShyValue value = {0};
     ShyStatus status = shy_evaluate_no_vars("1 + 2", &value);
@@ -187,6 +199,34 @@ static void test_callback_invalid_value_kind(void) {
     assert(value.integer_value == -1);
 }
 
+static void test_callback_invalid_status(void) {
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyStatus status = shy_evaluate_with_callback(
+        "x",
+        invalid_status_resolver,
+        NULL,
+        &value
+    );
+
+    assert(status == SHY_STATUS_RESOLVER_ERROR);
+    assert(value.integer_value == -1);
+}
+
+static void test_callback_null_expression(void) {
+    TestContext context = {.value = 40, .calls = 0};
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyStatus status = shy_evaluate_with_callback(
+        NULL,
+        resolve_from_context,
+        &context,
+        &value
+    );
+
+    assert(status == SHY_STATUS_NULL_POINTER);
+    assert(context.calls == 0);
+    assert(value.integer_value == -1);
+}
+
 int main(void) {
     test_integer_success();
     test_null_expression();
@@ -198,6 +238,8 @@ int main(void) {
     test_callback_null_resolver();
     test_callback_resolver_error();
     test_callback_invalid_value_kind();
+    test_callback_invalid_status();
+    test_callback_null_expression();
 
     puts("shunting_yard_ffi smoke test passed");
     return 0;

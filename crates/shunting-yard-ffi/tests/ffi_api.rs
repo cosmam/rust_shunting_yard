@@ -2,8 +2,10 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 
 use shunting_yard_ffi::{
-    SHY_VALUE_BOOL, SHY_VALUE_FLOAT, SHY_VALUE_INTEGER, ShyStatus, ShyValue, ShyValueKind,
-    ShyVariableResolver, shy_evaluate_no_vars, shy_evaluate_with_callback,
+    SHY_STATUS_EVALUATION_ERROR, SHY_STATUS_INVALID_UTF8, SHY_STATUS_INVALID_VALUE,
+    SHY_STATUS_NULL_POINTER, SHY_STATUS_OK, SHY_STATUS_RESOLVER_ERROR, SHY_VALUE_BOOL,
+    SHY_VALUE_FLOAT, SHY_VALUE_INTEGER, ShyStatus, ShyValue, ShyValueKind, ShyVariableResolver,
+    shy_evaluate_no_vars, shy_evaluate_with_callback,
 };
 
 fn default_test_value() -> ShyValue {
@@ -54,7 +56,7 @@ unsafe extern "C" fn resolve_x_to_integer(
     out_value: *mut ShyValue,
 ) -> ShyStatus {
     if name.is_null() || out_value.is_null() {
-        return ShyStatus::NullPointer;
+        return SHY_STATUS_NULL_POINTER;
     }
 
     // SAFETY:
@@ -63,7 +65,7 @@ unsafe extern "C" fn resolve_x_to_integer(
     let name = unsafe { CStr::from_ptr(name) };
 
     if name.to_bytes() != b"x" {
-        return ShyStatus::ResolverError;
+        return SHY_STATUS_RESOLVER_ERROR;
     }
 
     // SAFETY:
@@ -78,7 +80,7 @@ unsafe extern "C" fn resolve_x_to_integer(
         });
     }
 
-    ShyStatus::Ok
+    SHY_STATUS_OK
 }
 
 unsafe extern "C" fn resolve_x_to_bool(
@@ -87,7 +89,7 @@ unsafe extern "C" fn resolve_x_to_bool(
     out_value: *mut ShyValue,
 ) -> ShyStatus {
     if name.is_null() || out_value.is_null() {
-        return ShyStatus::NullPointer;
+        return SHY_STATUS_NULL_POINTER;
     }
 
     // SAFETY:
@@ -96,7 +98,7 @@ unsafe extern "C" fn resolve_x_to_bool(
     let name = unsafe { CStr::from_ptr(name) };
 
     if name.to_bytes() != b"x" {
-        return ShyStatus::ResolverError;
+        return SHY_STATUS_RESOLVER_ERROR;
     }
 
     // SAFETY:
@@ -111,7 +113,7 @@ unsafe extern "C" fn resolve_x_to_bool(
         });
     }
 
-    ShyStatus::Ok
+    SHY_STATUS_OK
 }
 
 unsafe extern "C" fn resolve_x_to_float(
@@ -120,7 +122,7 @@ unsafe extern "C" fn resolve_x_to_float(
     out_value: *mut ShyValue,
 ) -> ShyStatus {
     if name.is_null() || out_value.is_null() {
-        return ShyStatus::NullPointer;
+        return SHY_STATUS_NULL_POINTER;
     }
 
     // SAFETY:
@@ -129,7 +131,7 @@ unsafe extern "C" fn resolve_x_to_float(
     let name = unsafe { CStr::from_ptr(name) };
 
     if name.to_bytes() != b"x" {
-        return ShyStatus::ResolverError;
+        return SHY_STATUS_RESOLVER_ERROR;
     }
 
     // SAFETY:
@@ -144,7 +146,7 @@ unsafe extern "C" fn resolve_x_to_float(
         });
     }
 
-    ShyStatus::Ok
+    SHY_STATUS_OK
 }
 
 struct TestContext {
@@ -158,7 +160,7 @@ unsafe extern "C" fn resolve_from_user_data(
     out_value: *mut ShyValue,
 ) -> ShyStatus {
     if name.is_null() || user_data.is_null() || out_value.is_null() {
-        return ShyStatus::NullPointer;
+        return SHY_STATUS_NULL_POINTER;
     }
 
     // SAFETY:
@@ -167,7 +169,7 @@ unsafe extern "C" fn resolve_from_user_data(
     let name = unsafe { CStr::from_ptr(name) };
 
     if name.to_bytes() != b"x" {
-        return ShyStatus::ResolverError;
+        return SHY_STATUS_RESOLVER_ERROR;
     }
 
     // SAFETY:
@@ -188,7 +190,7 @@ unsafe extern "C" fn resolve_from_user_data(
         });
     }
 
-    ShyStatus::Ok
+    SHY_STATUS_OK
 }
 
 unsafe extern "C" fn failing_resolver(
@@ -196,7 +198,7 @@ unsafe extern "C" fn failing_resolver(
     _user_data: *mut c_void,
     _out_value: *mut ShyValue,
 ) -> ShyStatus {
-    ShyStatus::ResolverError
+    SHY_STATUS_RESOLVER_ERROR
 }
 
 unsafe extern "C" fn invalid_kind_resolver(
@@ -205,7 +207,7 @@ unsafe extern "C" fn invalid_kind_resolver(
     out_value: *mut ShyValue,
 ) -> ShyStatus {
     if out_value.is_null() {
-        return ShyStatus::NullPointer;
+        return SHY_STATUS_NULL_POINTER;
     }
 
     // SAFETY:
@@ -220,7 +222,15 @@ unsafe extern "C" fn invalid_kind_resolver(
         });
     }
 
-    ShyStatus::Ok
+    SHY_STATUS_OK
+}
+
+unsafe extern "C" fn invalid_status_resolver(
+    _name: *const c_char,
+    _user_data: *mut c_void,
+    _out_value: *mut ShyValue,
+) -> ShyStatus {
+    999
 }
 
 unsafe extern "C" fn infinite_float_resolver(
@@ -229,7 +239,7 @@ unsafe extern "C" fn infinite_float_resolver(
     out_value: *mut ShyValue,
 ) -> ShyStatus {
     if out_value.is_null() {
-        return ShyStatus::NullPointer;
+        return SHY_STATUS_NULL_POINTER;
     }
 
     // SAFETY:
@@ -244,7 +254,7 @@ unsafe extern "C" fn infinite_float_resolver(
         });
     }
 
-    ShyStatus::Ok
+    SHY_STATUS_OK
 }
 
 unsafe extern "C" fn subnormal_float_resolver(
@@ -253,7 +263,7 @@ unsafe extern "C" fn subnormal_float_resolver(
     out_value: *mut ShyValue,
 ) -> ShyStatus {
     if out_value.is_null() {
-        return ShyStatus::NullPointer;
+        return SHY_STATUS_NULL_POINTER;
     }
 
     // SAFETY:
@@ -268,7 +278,7 @@ unsafe extern "C" fn subnormal_float_resolver(
         });
     }
 
-    ShyStatus::Ok
+    SHY_STATUS_OK
 }
 
 #[test]
@@ -277,7 +287,7 @@ fn evaluate_no_vars_rejects_null_expression() {
 
     let status = evaluate(ptr::null(), &mut out);
 
-    assert_eq!(status, ShyStatus::NullPointer);
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
     assert_eq!(out, default_test_value());
 }
 
@@ -287,7 +297,7 @@ fn evaluate_no_vars_rejects_null_output() {
 
     let status = evaluate(expression.as_ptr(), ptr::null_mut());
 
-    assert_eq!(status, ShyStatus::NullPointer);
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
 }
 
 #[test]
@@ -297,7 +307,7 @@ fn evaluate_no_vars_rejects_invalid_utf8() {
 
     let status = evaluate(bytes.as_ptr().cast(), &mut out);
 
-    assert_eq!(status, ShyStatus::InvalidUtf8);
+    assert_eq!(status, SHY_STATUS_INVALID_UTF8);
     assert_eq!(out, default_test_value());
 }
 
@@ -308,7 +318,7 @@ fn evaluate_no_vars_returns_integer_value() {
 
     let status = evaluate(expression.as_ptr(), &mut out);
 
-    assert_eq!(status, ShyStatus::Ok);
+    assert_eq!(status, SHY_STATUS_OK);
     assert_eq!(out.kind, SHY_VALUE_INTEGER);
     assert_eq!(out.integer_value, 3);
     assert_eq!(out.bool_value, 0);
@@ -322,7 +332,7 @@ fn evaluate_no_vars_returns_bool_value() {
 
     let status = evaluate(expression.as_ptr(), &mut out);
 
-    assert_eq!(status, ShyStatus::Ok);
+    assert_eq!(status, SHY_STATUS_OK);
     assert_eq!(out.kind, SHY_VALUE_BOOL);
     assert_eq!(out.bool_value, 1);
     assert_eq!(out.integer_value, 0);
@@ -336,7 +346,7 @@ fn evaluate_no_vars_returns_float_value() {
 
     let status = evaluate(expression.as_ptr(), &mut out);
 
-    assert_eq!(status, ShyStatus::Ok);
+    assert_eq!(status, SHY_STATUS_OK);
     assert_eq!(out.kind, SHY_VALUE_FLOAT);
     assert_eq!(out.bool_value, 0);
     assert_eq!(out.integer_value, 0);
@@ -350,7 +360,7 @@ fn evaluate_no_vars_reports_evaluation_error() {
 
     let status = evaluate(expression.as_ptr(), &mut out);
 
-    assert_eq!(status, ShyStatus::EvaluationError);
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
     assert_eq!(out, default_test_value());
 }
 
@@ -361,7 +371,7 @@ fn evaluate_no_vars_reports_parse_or_lex_error_as_evaluation_error() {
 
     let status = evaluate(expression.as_ptr(), &mut out);
 
-    assert_eq!(status, ShyStatus::EvaluationError);
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
     assert_eq!(out, default_test_value());
 }
 
@@ -376,7 +386,7 @@ fn evaluate_with_callback_rejects_null_expression() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::NullPointer);
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
     assert_eq!(out, default_test_value());
 }
 
@@ -387,7 +397,7 @@ fn evaluate_with_callback_rejects_null_callback() {
 
     let status = evaluate_with_callback(expression.as_ptr(), None, ptr::null_mut(), &mut out);
 
-    assert_eq!(status, ShyStatus::NullPointer);
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
     assert_eq!(out, default_test_value());
 }
 
@@ -402,7 +412,7 @@ fn evaluate_with_callback_rejects_null_output() {
         ptr::null_mut(),
     );
 
-    assert_eq!(status, ShyStatus::NullPointer);
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
 }
 
 #[test]
@@ -417,7 +427,7 @@ fn evaluate_with_callback_rejects_invalid_utf8() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::InvalidUtf8);
+    assert_eq!(status, SHY_STATUS_INVALID_UTF8);
     assert_eq!(out, default_test_value());
 }
 
@@ -433,7 +443,7 @@ fn evaluate_with_callback_returns_integer_value() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::Ok);
+    assert_eq!(status, SHY_STATUS_OK);
     assert_eq!(out.kind, SHY_VALUE_INTEGER);
     assert_eq!(out.integer_value, 42);
     assert_eq!(out.bool_value, 0);
@@ -452,7 +462,7 @@ fn evaluate_with_callback_returns_bool_value() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::Ok);
+    assert_eq!(status, SHY_STATUS_OK);
     assert_eq!(out.kind, SHY_VALUE_BOOL);
     assert_eq!(out.bool_value, 1);
     assert_eq!(out.integer_value, 0);
@@ -471,7 +481,7 @@ fn evaluate_with_callback_returns_float_value() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::Ok);
+    assert_eq!(status, SHY_STATUS_OK);
     assert_eq!(out.kind, SHY_VALUE_FLOAT);
     assert_eq!(out.bool_value, 0);
     assert_eq!(out.integer_value, 0);
@@ -494,7 +504,7 @@ fn evaluate_with_callback_passes_user_data_and_supports_repeated_lookups() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::Ok);
+    assert_eq!(status, SHY_STATUS_OK);
     assert_eq!(out.kind, SHY_VALUE_INTEGER);
     assert_eq!(out.integer_value, 40);
     assert_eq!(context.calls, 2);
@@ -512,7 +522,7 @@ fn evaluate_with_callback_returns_callback_failure_status() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::ResolverError);
+    assert_eq!(status, SHY_STATUS_RESOLVER_ERROR);
     assert_eq!(out, default_test_value());
 }
 
@@ -528,7 +538,23 @@ fn evaluate_with_callback_rejects_unknown_value_kind() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::InvalidValue);
+    assert_eq!(status, SHY_STATUS_INVALID_VALUE);
+    assert_eq!(out, default_test_value());
+}
+
+#[test]
+fn evaluate_with_callback_maps_unknown_callback_status_to_resolver_error() {
+    let expression = c_string("x");
+    let mut out = default_test_value();
+
+    let status = evaluate_with_callback(
+        expression.as_ptr(),
+        Some(invalid_status_resolver),
+        ptr::null_mut(),
+        &mut out,
+    );
+
+    assert_eq!(status, SHY_STATUS_RESOLVER_ERROR);
     assert_eq!(out, default_test_value());
 }
 
@@ -544,7 +570,7 @@ fn evaluate_with_callback_rejects_non_finite_float() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::EvaluationError);
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
     assert_eq!(out, default_test_value());
 }
 
@@ -560,7 +586,7 @@ fn evaluate_with_callback_rejects_subnormal_float() {
         &mut out,
     );
 
-    assert_eq!(status, ShyStatus::EvaluationError);
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
     assert_eq!(out, default_test_value());
 }
 

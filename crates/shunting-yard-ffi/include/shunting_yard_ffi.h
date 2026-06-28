@@ -7,7 +7,9 @@
 extern "C" {
 #endif
 
-typedef enum ShyStatus {
+typedef int32_t ShyStatus;
+
+enum {
     SHY_STATUS_OK = 0,
     SHY_STATUS_NULL_POINTER = 1,
     SHY_STATUS_INVALID_UTF8 = 2,
@@ -15,7 +17,7 @@ typedef enum ShyStatus {
     SHY_STATUS_PANIC = 4,
     SHY_STATUS_RESOLVER_ERROR = 5,
     SHY_STATUS_INVALID_VALUE = 6,
-} ShyStatus;
+};
 
 enum {
     SHY_VALUE_BOOL = 0,
@@ -30,6 +32,27 @@ typedef struct ShyValue {
     double float_value;
 } ShyValue;
 
+/*
+ * Callback used to resolve variable names.
+ *
+ * name:
+ *   Valid NUL-terminated UTF-8 variable name. Valid only for the duration
+ *   of the callback call. The callback must not retain this pointer.
+ *
+ * user_data:
+ *   Caller-owned pointer passed through from shy_evaluate_with_callback.
+ *   May be NULL. Rust does not dereference or retain it.
+ *
+ * out_value:
+ *   Writable storage for one ShyValue. The callback must write this value
+ *   before returning SHY_STATUS_OK.
+ *
+ * Return:
+ *   SHY_STATUS_OK only after writing out_value. Return a non-OK status if
+ *   the variable cannot be resolved.
+ *
+ * The callback must not unwind across the C ABI boundary.
+ */
 typedef ShyStatus (*ShyVariableResolver)(
     const char *name,
     void *user_data,
