@@ -335,7 +335,10 @@ impl From<ResourceLimitError> for Error {
 
 impl From<EvalError> for Error {
     fn from(error: EvalError) -> Self {
-        Error::Eval(error)
+        match error {
+            EvalError::ResourceLimit(error) => Error::ResourceLimit(error),
+            error => Error::Eval(error),
+        }
     }
 }
 
@@ -854,19 +857,12 @@ where
                 }));
             }
 
-            validate_ast_limits(&ast, options).map_err(eval_error_to_stage_error)?;
+            validate_ast_limits(&ast, options).map_err(Error::from)?;
             Ok(*ast)
         }
         Err(error) => Err(Error::Parse(ParseDiagnostics {
             diagnostics: vec![parse_error_to_diagnostic(error)],
         })),
-    }
-}
-
-fn eval_error_to_stage_error(error: EvalError) -> Error {
-    match error {
-        EvalError::ResourceLimit(error) => Error::ResourceLimit(error),
-        error => Error::Eval(error),
     }
 }
 
@@ -1159,6 +1155,16 @@ mod tests {
     }
 
     #[test]
+    fn eval_error_resource_limit_converts_to_top_level_resource_limit() {
+        assert_eq!(
+            Error::from(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyTokens { actual: 2, max: 1 }
+            )),
+            Error::ResourceLimit(ResourceLimitError::TooManyTokens { actual: 2, max: 1 })
+        );
+    }
+
+    #[test]
     fn diagnostic_errors_convert_to_legacy_eval_errors() {
         assert_eq!(
             EvalError::from(Error::ResourceLimit(ResourceLimitError::TooManyTokens {
@@ -1282,6 +1288,26 @@ mod tests {
             diagnostic.kind,
             ParseDiagnosticKind::Recovery { .. }
         ));
+    }
+
+    #[test]
+    fn parse_detailed_recovery_preserves_cause_and_expected_tokens() {
+        let diagnostics = match parse_detailed("1 +") {
+            Err(Error::Parse(diagnostics)) => diagnostics,
+            other => panic!("expected parse diagnostics, got {other:?}"),
+        };
+
+        let diagnostic = &diagnostics.diagnostics[0];
+        let ParseDiagnosticKind::Recovery { cause, .. } = &diagnostic.kind else {
+            panic!("expected recovery diagnostic, got {diagnostic:?}");
+        };
+
+        match cause.as_ref() {
+            ParseDiagnosticKind::UnrecognizedEof { expected } => {
+                assert!(!expected.is_empty());
+            }
+            other => panic!("expected unrecognized EOF cause, got {other:?}"),
+        }
     }
 
     #[test]

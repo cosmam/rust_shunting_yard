@@ -1,0 +1,30 @@
+stages:
+  - fuzz
+
+variables:
+  CARGO_TERM_COLOR: always
+  CARGO_HOME: "$CI_PROJECT_DIR/.cargo"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG-cargo-fuzz"
+  paths:
+    - .cargo/bin/
+    - .cargo/git/
+    - .cargo/registry/
+    - fuzz/target/
+    - target/
+
+fuzz:evaluate_no_panic:
+  stage: fuzz
+  image: rust:nightly
+  rules:
+    - when: manual
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends clang libclang-dev
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - command -v cargo-fuzz || cargo install cargo-fuzz --locked
+  script:
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - cd fuzz
+    - cargo fuzz build evaluate_no_panic
