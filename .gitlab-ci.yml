@@ -11,7 +11,7 @@ cache:
     - .cargo/bin/
     - .cargo/git/
     - .cargo/registry/
-    - fuzz/target/
+    - crates/shunting-yard/fuzz/target/
     - target/
 
 fuzz:evaluate_no_panic:
@@ -26,5 +26,5 @@ fuzz:evaluate_no_panic:
     - command -v cargo-fuzz || cargo install cargo-fuzz --locked
   script:
     - export PATH="$CARGO_HOME/bin:$PATH"
-    - cd fuzz
+    - cd crates/shunting-yard/fuzz
     - cargo fuzz build evaluate_no_panic

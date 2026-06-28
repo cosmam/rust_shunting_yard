@@ -18,4 +18,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-      - run: cargo +nightly miri test --lib tests::evaluate_
+      - run: cargo +nightly miri test -p shunting_yard --lib tests::evaluate_

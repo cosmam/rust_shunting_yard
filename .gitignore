@@ -77,6 +77,11 @@ docs/_build/
 target/
 mutants.out*
 
+# Legacy generated fuzz artifacts from before the workspace split.
+/fuzz/artifacts/
+/fuzz/corpus/
+/fuzz/target/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

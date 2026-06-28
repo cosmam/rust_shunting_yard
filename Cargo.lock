@@ -764,6 +764,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shunting_yard_ffi"
+version = "0.1.0"
+dependencies = [
+ "shunting_yard",
+]
+
+[[package]]
 name = "siphasher"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
