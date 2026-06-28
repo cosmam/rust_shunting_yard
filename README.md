@@ -9,7 +9,8 @@ Whitespace has no effect.
 ## Workspace Layout
 
 - `crates/shunting-yard`: safe Rust expression parser/evaluator.
-- `crates/shunting-yard-ffi`: C ABI adapter.
+- `crates/shunting-yard-ffi`: C ABI adapter exposing no-variable evaluation
+  and callback-backed variable resolution.
 - `c-tests`: external C smoke test for the FFI library.
 
 ## Evaluation API
