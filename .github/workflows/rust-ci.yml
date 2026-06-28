@@ -55,3 +55,11 @@ jobs:
         with:
           components: clippy
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  c-ffi-smoke:
+    name: C FFI smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: ./c-tests/run-smoke.sh
