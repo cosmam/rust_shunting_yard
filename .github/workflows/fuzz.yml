@@ -19,5 +19,5 @@ jobs:
           tool: cargo-fuzz
 
       - name: Build evaluate_no_panic fuzz target
-        working-directory: fuzz
+        working-directory: crates/shunting-yard/fuzz
         run: cargo fuzz build evaluate_no_panic

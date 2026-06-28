@@ -3,8 +3,8 @@
 gitignore = true
 test_package = ["shunting_yard"]
 examine_globs = [
-    "src/**/*.rs",
+    "crates/shunting-yard/src/**/*.rs",
 ]
 exclude_globs = [
-    "src/main.rs",
+    "crates/shunting-yard/src/main.rs",
 ]

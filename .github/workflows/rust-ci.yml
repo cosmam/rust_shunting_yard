@@ -27,7 +27,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --all-targets --all-features
+      - run: cargo check --workspace --all-targets --all-features
+      - run: cargo test --workspace --all-targets --all-features
 
   release-test:
     name: Release tests
@@ -35,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --release --all-targets --all-features
+      - run: cargo test --release --workspace --all-targets --all-features
 
   doctest:
     name: Doctests
@@ -43,7 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --doc --all-features
+      - run: cargo test --doc --workspace --all-features
 
   clippy:
     name: Clippy
@@ -53,4 +54,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  c-ffi-smoke:
+    name: C FFI smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: bash ./c-tests/run-smoke.sh

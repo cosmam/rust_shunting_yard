@@ -8,8 +8,7 @@ on:
       - ".github/workflows/cargo-mutants.yml"
       - "Cargo.lock"
       - "Cargo.toml"
-      - "build.rs"
-      - "src/**"
+      - "crates/shunting-yard/**"
 
 env:
   CARGO_TERM_COLOR: always

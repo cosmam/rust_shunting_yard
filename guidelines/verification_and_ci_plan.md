@@ -11,10 +11,11 @@ Run these before merging evaluator, parser, resolver, or workflow changes:
 
 ```bash
 cargo fmt --check
-cargo test --all-targets --all-features
-cargo test --release --all-targets --all-features
-cargo test --doc --all-features
-cargo clippy --all-targets --all-features -- -D warnings
+cargo check --workspace --all-targets --all-features
+cargo test --workspace --all-targets --all-features
+cargo test --release --workspace --all-targets --all-features
+cargo test --doc --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
 The release test run matters because arithmetic overflow behavior must not
@@ -35,10 +36,10 @@ license allow-listing is explicit, and duplicate dependencies are reported.
 
 ## Fuzzing
 
-The hostile-input fuzz target lives under `fuzz/`:
+The hostile-input fuzz target lives under `crates/shunting-yard/fuzz/`:
 
 ```bash
-cd fuzz
+cd crates/shunting-yard/fuzz
 cargo fuzz build evaluate_no_panic
 cargo fuzz run evaluate_no_panic
 ```
@@ -61,7 +62,7 @@ Miri is available as a manual and weekly scheduled workflow. The local command
 matching CI is:
 
 ```bash
-MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --lib tests::evaluate_
+MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test -p shunting_yard --lib tests::evaluate_
 ```
 
 The scope is deliberately narrower than the full test suite. The public
@@ -76,7 +77,7 @@ AddressSanitizer is available as a manual and weekly scheduled workflow. The
 local command matching CI is:
 
 ```bash
-RUSTFLAGS="-Zsanitizer=address" cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu --all-targets --all-features
+RUSTFLAGS="-Zsanitizer=address" cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu --workspace --all-targets --all-features
 ```
 
 The sanitizer job runs test binaries only. Regular doctests are covered by the
@@ -91,10 +92,12 @@ wait until the crate has meaningful concurrency.
 `.github/workflows/rust-ci.yml` runs on pushes to `main` and pull requests:
 
 - `cargo fmt --check`
-- `cargo test --all-targets --all-features`
-- `cargo test --release --all-targets --all-features`
-- `cargo test --doc --all-features`
-- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo check --workspace --all-targets --all-features`
+- `cargo test --workspace --all-targets --all-features`
+- `cargo test --release --workspace --all-targets --all-features`
+- `cargo test --doc --workspace --all-features`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `./c-tests/run-smoke.sh`
 
 `.github/workflows/security.yml` runs supply-chain checks:
 
@@ -108,12 +111,24 @@ target.
 
 `.github/workflows/sanitizers.yml` is manual and scheduled weekly.
 
+## FFI Adapter Checks
+
+- the core crate must remain `unsafe_code = "forbid"`;
+- unsafe code must remain isolated to `shunting_yard_ffi`;
+- FFI exported functions must not unwind across the ABI boundary;
+- C smoke tests must pass in CI;
+- Rust-side FFI tests must cover null pointers, invalid UTF-8, success, and
+  evaluation failure.
+
 ## Current Policy Notes
 
-Unsafe code is forbidden through Cargo lints. Panic-prone constructs such as
-`unwrap`, `expect`, `todo!`, and `unimplemented!` are denied in hand-written
-production modules. The generated parser integration has a narrow documented
-allowance because generated LALRPOP code uses unwrap internally.
+Unsafe code is forbidden in the core crate through Cargo lints. The FFI crate
+contains the repository's raw pointer boundary and must keep unsafe operations
+small, documented, and covered by Rust-side and C smoke tests. Panic-prone
+constructs such as `unwrap`, `expect`, `todo!`, and `unimplemented!` are denied
+in hand-written production modules of the core crate. The generated parser
+integration has a narrow documented allowance because generated LALRPOP code
+uses unwrap internally.
 
 All evaluation paths must continue to reject malformed parser recovery, invalid
 variable floats, non-finite float operation results, subnormal floats, checked
@@ -127,7 +142,7 @@ Parse/evaluate separation must preserve the existing safety model:
 - parse-only APIs must enforce lexical, parser, and resource-limit failures
   before evaluation;
 - evaluate-parsed APIs must still validate resolver-returned values;
-- no new unsafe code should be introduced.
+- no unsafe code should be introduced outside the FFI adapter crate.
 
 Diagnostic-aware APIs must preserve compatibility:
 

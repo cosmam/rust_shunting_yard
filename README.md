@@ -6,6 +6,12 @@ Any constants have already been replaced with their numerical values. So, for in
 
 Whitespace has no effect.
 
+## Workspace Layout
+
+- `crates/shunting-yard`: safe Rust expression parser/evaluator.
+- `crates/shunting-yard-ffi`: C ABI adapter.
+- `c-tests`: external C smoke test for the FFI library.
+
 ## Evaluation API
 
 The compatibility entrypoint evaluates an expression with variables supplied by
@@ -165,10 +171,11 @@ The main local verification pass is:
 
 ```bash
 cargo fmt --check
-cargo test --all-targets --all-features
-cargo test --release --all-targets --all-features
-cargo test --doc --all-features
-cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets --all-features
+cargo test --release --workspace --all-targets --all-features
+cargo test --doc --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+./c-tests/run-smoke.sh
 ```
 
 See [guidelines/verification_and_ci_plan.md](guidelines/verification_and_ci_plan.md)
