@@ -204,6 +204,144 @@ impl<'input> ParsedExpression<'input> {
     }
 }
 
+/// Byte range in the original source text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceSpan {
+    /// Inclusive start byte offset.
+    pub start: usize,
+    /// Exclusive end byte offset.
+    pub end: usize,
+}
+
+impl SourceSpan {
+    /// Build a source span from byte offsets.
+    pub const fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+}
+
+/// One parser diagnostic associated with a source span when one is available.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseDiagnostic {
+    /// Source range for this diagnostic, if the parser reported one.
+    pub span: Option<SourceSpan>,
+    /// Structured diagnostic detail.
+    pub kind: ParseDiagnosticKind,
+}
+
+/// Structured parser diagnostic categories.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ParseDiagnosticKind {
+    /// The parser received an invalid token.
+    InvalidToken,
+    /// The input ended before the parser could finish an expression.
+    UnrecognizedEof {
+        /// Token names that would have allowed parsing to continue.
+        expected: Vec<String>,
+    },
+    /// The parser found an unexpected token.
+    UnrecognizedToken {
+        /// Debug representation of the unexpected token.
+        token: String,
+        /// Token names that would have allowed parsing to continue.
+        expected: Vec<String>,
+    },
+    /// The parser found extra input after a complete expression.
+    ExtraToken {
+        /// Debug representation of the extra token.
+        token: String,
+    },
+    /// Parser user error.
+    User {
+        /// Owned error message.
+        message: String,
+    },
+    /// Parser recovery diagnostic containing the tokens dropped by recovery.
+    Recovery {
+        /// Debug representations of tokens discarded during recovery.
+        dropped_tokens: Vec<String>,
+        /// Underlying parser diagnostic that caused recovery.
+        cause: Box<ParseDiagnosticKind>,
+    },
+}
+
+/// Structured parser diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{count} parse diagnostic(s)", count = .diagnostics.len())]
+pub struct ParseDiagnostics {
+    /// Individual parser diagnostics.
+    pub diagnostics: Vec<ParseDiagnostic>,
+}
+
+impl ParseDiagnostics {
+    /// Return the number of diagnostics.
+    pub fn len(&self) -> usize {
+        self.diagnostics.len()
+    }
+
+    /// Return true when no diagnostics are present.
+    pub fn is_empty(&self) -> bool {
+        self.diagnostics.is_empty()
+    }
+
+    /// Return the number of parser recovery diagnostics.
+    pub fn recovery_count(&self) -> usize {
+        self.diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic.kind, ParseDiagnosticKind::Recovery { .. }))
+            .count()
+    }
+
+    fn into_legacy_eval_error(self) -> EvalError {
+        let recovery_count = self.recovery_count();
+
+        if recovery_count > 0 {
+            EvalError::ParserRecovery {
+                count: recovery_count,
+            }
+        } else {
+            EvalError::ParserError
+        }
+    }
+}
+
+/// Top-level error returned by diagnostic-aware APIs.
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum Error {
+    /// A configured resource limit was exceeded.
+    #[error("{0}")]
+    ResourceLimit(ResourceLimitError),
+    /// The lexer found malformed source text.
+    #[error("lexical error at bytes {span:?}: {error}")]
+    Lexical {
+        /// Source range for the lexical error.
+        span: SourceSpan,
+        /// Lexical error detail.
+        error: LexicalError,
+    },
+    /// The parser could not produce a valid expression.
+    #[error("{0}")]
+    Parse(ParseDiagnostics),
+    /// Evaluation failed after parsing succeeded.
+    #[error("{0}")]
+    Eval(EvalError),
+}
+
+impl From<ResourceLimitError> for Error {
+    fn from(error: ResourceLimitError) -> Self {
+        Error::ResourceLimit(error)
+    }
+}
+
+impl From<EvalError> for Error {
+    fn from(error: EvalError) -> Self {
+        match error {
+            EvalError::ResourceLimit(error) => Error::ResourceLimit(error),
+            error => Error::Eval(error),
+        }
+    }
+}
+
 /// Error returned when expression evaluation fails.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum EvalError {
@@ -279,6 +417,17 @@ pub enum EvalError {
     UnknownVariable(String),
 }
 
+impl From<Error> for EvalError {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::ResourceLimit(error) => EvalError::ResourceLimit(error),
+            Error::Lexical { error, .. } => EvalError::LexicalError(error),
+            Error::Parse(diagnostics) => diagnostics.into_legacy_eval_error(),
+            Error::Eval(error) => error,
+        }
+    }
+}
+
 /// Parse expression text using default evaluation options.
 ///
 /// # Errors
@@ -287,6 +436,27 @@ pub enum EvalError {
 /// parsed within [`EvalOptions::default`].
 pub fn parse(text: &str) -> Result<ParsedExpression<'_>, EvalError> {
     parse_with_options(text, &EvalOptions::default())
+}
+
+/// Parse expression text using default evaluation options and return structured
+/// diagnostic errors.
+///
+/// # Examples
+///
+/// ```
+/// use shunting_yard::{parse_detailed, Error};
+///
+/// let error = parse_detailed("$");
+///
+/// assert!(matches!(error, Err(Error::Lexical { .. })));
+/// ```
+///
+/// # Errors
+///
+/// Returns [`Error::Lexical`], [`Error::Parse`], or [`Error::ResourceLimit`]
+/// when `text` cannot be parsed within [`EvalOptions::default`].
+pub fn parse_detailed(text: &str) -> Result<ParsedExpression<'_>, Error> {
+    parse_with_options_detailed(text, &EvalOptions::default())
 }
 
 /// Parse expression text into a reusable parsed expression.
@@ -303,17 +473,34 @@ pub fn parse_with_options<'input>(
     text: &'input str,
     options: &EvalOptions,
 ) -> Result<ParsedExpression<'input>, EvalError> {
+    parse_with_options_detailed(text, options).map_err(EvalError::from)
+}
+
+/// Parse expression text into a reusable parsed expression and return
+/// structured diagnostic errors.
+///
+/// The returned [`ParsedExpression`] hides the internal AST and can be evaluated
+/// repeatedly by APIs that accept parsed expressions.
+///
+/// # Errors
+///
+/// Returns [`Error::ResourceLimit`] when `text`, token count, AST size, depth,
+/// function arity, or parser recovery count exceeds `options`. Lexer failures
+/// are returned as [`Error::Lexical`], and parser failures are returned as
+/// [`Error::Parse`].
+pub fn parse_with_options_detailed<'input>(
+    text: &'input str,
+    options: &EvalOptions,
+) -> Result<ParsedExpression<'input>, Error> {
     if text.len() > options.max_input_bytes {
-        return Err(EvalError::ResourceLimit(
-            ResourceLimitError::InputTooLarge {
-                actual: text.len(),
-                max: options.max_input_bytes,
-            },
-        ));
+        return Err(Error::ResourceLimit(ResourceLimitError::InputTooLarge {
+            actual: text.len(),
+            max: options.max_input_bytes,
+        }));
     }
 
     let lexer = lexer::Lexer::new(text);
-    let ast = parse_tokens_with_options(lexer, options)?;
+    let ast = parse_tokens_with_options_detailed(lexer, options)?;
     Ok(ParsedExpression::new(ast))
 }
 
@@ -345,6 +532,22 @@ where
     eval::eval(&parsed.ast, resolver)
 }
 
+/// Evaluate a previously parsed expression with a resolver and return a
+/// top-level diagnostic error.
+///
+/// # Errors
+///
+/// Returns [`Error::Eval`] when resolver lookup or expression evaluation fails.
+pub fn evaluate_parsed_detailed<R>(
+    parsed: &ParsedExpression<'_>,
+    resolver: R,
+) -> Result<Value, Error>
+where
+    R: VariableResolver,
+{
+    eval::eval(&parsed.ast, resolver).map_err(Error::Eval)
+}
+
 /// Parse and evaluate an expression string.
 ///
 /// # Arguments
@@ -363,6 +566,31 @@ where
 /// invalid operations, are returned unchanged.
 pub fn evaluate(text: &str, variables: &HashMap<String, Value>) -> Result<Value, EvalError> {
     evaluate_with_options(text, variables, &EvalOptions::default())
+}
+
+/// Parse and evaluate an expression string with diagnostic-aware errors.
+///
+/// This map-backed entrypoint is the diagnostic-aware counterpart to
+/// [`evaluate`].
+///
+/// # Examples
+///
+/// ```
+/// use shunting_yard::{evaluate_detailed, Error, EvalError};
+/// use std::collections::HashMap;
+///
+/// let variables = HashMap::new();
+/// let error = evaluate_detailed("1 / 0", &variables);
+///
+/// assert_eq!(error, Err(Error::Eval(EvalError::DivisionByZero)));
+/// ```
+///
+/// # Errors
+///
+/// Returns [`Error::ResourceLimit`], [`Error::Lexical`], [`Error::Parse`], or
+/// [`Error::Eval`] according to the stage that failed.
+pub fn evaluate_detailed(text: &str, variables: &HashMap<String, Value>) -> Result<Value, Error> {
+    evaluate_with_options_and_resolver_detailed(text, variables, &EvalOptions::default())
 }
 
 /// Parse and evaluate an expression string with a custom variable resolver.
@@ -433,6 +661,24 @@ where
     evaluate_with_options_and_resolver(text, resolver, &EvalOptions::default())
 }
 
+/// Parse and evaluate an expression string with a custom variable resolver and
+/// diagnostic-aware errors.
+///
+/// This is the default-limited diagnostic entrypoint for named
+/// [`VariableResolver`] implementations. Closures also implement
+/// [`VariableResolver`] and can be passed directly.
+///
+/// # Errors
+///
+/// Returns [`Error::ResourceLimit`], [`Error::Lexical`], [`Error::Parse`], or
+/// [`Error::Eval`] according to the stage that failed.
+pub fn evaluate_with_resolver_detailed<R>(text: &str, resolver: R) -> Result<Value, Error>
+where
+    R: VariableResolver,
+{
+    evaluate_with_options_and_resolver_detailed(text, resolver, &EvalOptions::default())
+}
+
 /// Parse and evaluate an expression string with explicit resource limits.
 ///
 /// This map-backed entrypoint preserves the original public API while routing
@@ -495,8 +741,29 @@ pub fn evaluate_with_options_and_resolver<R>(
 where
     R: VariableResolver,
 {
-    let parsed = parse_with_options(text, options)?;
-    evaluate_parsed(&parsed, resolver)
+    evaluate_with_options_and_resolver_detailed(text, resolver, options).map_err(EvalError::from)
+}
+
+/// Parse and evaluate an expression string with explicit resource limits and
+/// diagnostic-aware errors.
+///
+/// This is the most general diagnostic-aware entrypoint: callers provide both
+/// resource limits and the variable resolution strategy.
+///
+/// # Errors
+///
+/// Returns [`Error::ResourceLimit`], [`Error::Lexical`], [`Error::Parse`], or
+/// [`Error::Eval`] according to the stage that failed.
+pub fn evaluate_with_options_and_resolver_detailed<R>(
+    text: &str,
+    resolver: R,
+    options: &EvalOptions,
+) -> Result<Value, Error>
+where
+    R: VariableResolver,
+{
+    let parsed = parse_with_options_detailed(text, options)?;
+    evaluate_parsed_detailed(&parsed, resolver)
 }
 
 #[cfg(test)]
@@ -524,10 +791,21 @@ where
     eval::eval(&ast, resolver)
 }
 
+#[cfg(test)]
 fn parse_tokens_with_options<'input, Tokens>(
     tokens: Tokens,
     options: &EvalOptions,
 ) -> Result<ast::Expression<'input>, EvalError>
+where
+    Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
+{
+    parse_tokens_with_options_detailed(tokens, options).map_err(EvalError::from)
+}
+
+fn parse_tokens_with_options_detailed<'input, Tokens>(
+    tokens: Tokens,
+    options: &EvalOptions,
+) -> Result<ast::Expression<'input>, Error>
 where
     Tokens: IntoIterator<Item = lexer::Spanned<tokens::Token<'input>, usize, tokens::LexicalError>>,
 {
@@ -536,17 +814,24 @@ where
 
     for token in tokens {
         if checked_tokens.len() >= options.max_tokens {
-            return Err(EvalError::ResourceLimit(
-                ResourceLimitError::TooManyTokens {
-                    actual: checked_tokens.len() + 1,
-                    max: options.max_tokens,
-                },
-            ));
+            return Err(Error::ResourceLimit(ResourceLimitError::TooManyTokens {
+                actual: checked_tokens.len() + 1,
+                max: options.max_tokens,
+            }));
         }
 
         match token {
-            Ok((_, tokens::Token::Error(error), _)) | Err(error) => {
-                return Err(EvalError::LexicalError(error));
+            Ok((start, tokens::Token::Error(error), end)) => {
+                return Err(Error::Lexical {
+                    span: SourceSpan::new(start, end),
+                    error,
+                });
+            }
+            Err(error) => {
+                return Err(Error::Lexical {
+                    span: SourceSpan::new(0, 0),
+                    error,
+                });
             }
             Ok(token) => checked_tokens.push(Ok(token)),
         }
@@ -559,7 +844,7 @@ where
         Ok(ast) => {
             if !errors.is_empty() {
                 if errors.len() > options.max_parser_recoveries {
-                    return Err(EvalError::ResourceLimit(
+                    return Err(Error::ResourceLimit(
                         ResourceLimitError::TooManyParserRecoveries {
                             actual: errors.len(),
                             max: options.max_parser_recoveries,
@@ -567,15 +852,75 @@ where
                     ));
                 }
 
-                return Err(EvalError::ParserRecovery {
-                    count: errors.len(),
-                });
+                return Err(Error::Parse(ParseDiagnostics {
+                    diagnostics: errors.into_iter().map(recovery_to_diagnostic).collect(),
+                }));
             }
 
-            validate_ast_limits(&ast, options)?;
+            validate_ast_limits(&ast, options).map_err(Error::from)?;
             Ok(*ast)
         }
-        Err(_) => Err(EvalError::ParserError),
+        Err(error) => Err(Error::Parse(ParseDiagnostics {
+            diagnostics: vec![parse_error_to_diagnostic(error)],
+        })),
+    }
+}
+
+fn parse_error_to_diagnostic<'input>(
+    error: lalrpop_util::ParseError<usize, tokens::Token<'input>, tokens::LexicalError>,
+) -> ParseDiagnostic {
+    match error {
+        lalrpop_util::ParseError::InvalidToken { location } => ParseDiagnostic {
+            span: Some(SourceSpan::new(location, location)),
+            kind: ParseDiagnosticKind::InvalidToken,
+        },
+        lalrpop_util::ParseError::UnrecognizedEof { location, expected } => ParseDiagnostic {
+            span: Some(SourceSpan::new(location, location)),
+            kind: ParseDiagnosticKind::UnrecognizedEof { expected },
+        },
+        lalrpop_util::ParseError::UnrecognizedToken { token, expected } => {
+            let (start, token, end) = token;
+            ParseDiagnostic {
+                span: Some(SourceSpan::new(start, end)),
+                kind: ParseDiagnosticKind::UnrecognizedToken {
+                    token: format!("{token:?}"),
+                    expected,
+                },
+            }
+        }
+        lalrpop_util::ParseError::ExtraToken { token } => {
+            let (start, token, end) = token;
+            ParseDiagnostic {
+                span: Some(SourceSpan::new(start, end)),
+                kind: ParseDiagnosticKind::ExtraToken {
+                    token: format!("{token:?}"),
+                },
+            }
+        }
+        lalrpop_util::ParseError::User { error } => ParseDiagnostic {
+            span: None,
+            kind: ParseDiagnosticKind::User {
+                message: error.to_string(),
+            },
+        },
+    }
+}
+
+fn recovery_to_diagnostic<'input>(
+    recovery: lalrpop_util::ErrorRecovery<usize, tokens::Token<'input>, tokens::LexicalError>,
+) -> ParseDiagnostic {
+    let cause = parse_error_to_diagnostic(recovery.error);
+
+    ParseDiagnostic {
+        span: cause.span,
+        kind: ParseDiagnosticKind::Recovery {
+            dropped_tokens: recovery
+                .dropped_tokens
+                .into_iter()
+                .map(|(_, token, _)| format!("{token:?}"))
+                .collect(),
+            cause: Box::new(cause.kind),
+        },
     }
 }
 
@@ -752,6 +1097,119 @@ mod tests {
     }
 
     #[test]
+    fn source_span_records_byte_offsets() {
+        assert_eq!(SourceSpan::new(2, 5), SourceSpan { start: 2, end: 5 });
+    }
+
+    #[test]
+    fn parse_diagnostics_reports_length_and_empty_state() {
+        let empty = ParseDiagnostics {
+            diagnostics: Vec::new(),
+        };
+        assert_eq!(empty.len(), 0);
+        assert!(empty.is_empty());
+
+        let diagnostics = ParseDiagnostics {
+            diagnostics: vec![ParseDiagnostic {
+                span: Some(SourceSpan::new(1, 2)),
+                kind: ParseDiagnosticKind::InvalidToken,
+            }],
+        };
+        assert_eq!(diagnostics.len(), 1);
+        assert!(!diagnostics.is_empty());
+    }
+
+    #[test]
+    fn parse_diagnostics_counts_recoveries() {
+        let diagnostics = ParseDiagnostics {
+            diagnostics: vec![
+                ParseDiagnostic {
+                    span: Some(SourceSpan::new(1, 2)),
+                    kind: ParseDiagnosticKind::InvalidToken,
+                },
+                ParseDiagnostic {
+                    span: Some(SourceSpan::new(2, 3)),
+                    kind: ParseDiagnosticKind::Recovery {
+                        dropped_tokens: vec!["Plus".to_owned()],
+                        cause: Box::new(ParseDiagnosticKind::UnrecognizedEof {
+                            expected: vec!["Integer".to_owned()],
+                        }),
+                    },
+                },
+            ],
+        };
+
+        assert_eq!(diagnostics.recovery_count(), 1);
+    }
+
+    #[test]
+    fn top_level_error_wraps_resource_and_eval_failures() {
+        assert_eq!(
+            Error::from(ResourceLimitError::TooManyTokens { actual: 2, max: 1 }),
+            Error::ResourceLimit(ResourceLimitError::TooManyTokens { actual: 2, max: 1 })
+        );
+        assert_eq!(
+            Error::from(EvalError::DivisionByZero),
+            Error::Eval(EvalError::DivisionByZero)
+        );
+    }
+
+    #[test]
+    fn eval_error_resource_limit_converts_to_top_level_resource_limit() {
+        assert_eq!(
+            Error::from(EvalError::ResourceLimit(
+                ResourceLimitError::TooManyTokens { actual: 2, max: 1 }
+            )),
+            Error::ResourceLimit(ResourceLimitError::TooManyTokens { actual: 2, max: 1 })
+        );
+    }
+
+    #[test]
+    fn diagnostic_errors_convert_to_legacy_eval_errors() {
+        assert_eq!(
+            EvalError::from(Error::ResourceLimit(ResourceLimitError::TooManyTokens {
+                actual: 2,
+                max: 1,
+            })),
+            EvalError::ResourceLimit(ResourceLimitError::TooManyTokens { actual: 2, max: 1 })
+        );
+        assert_eq!(
+            EvalError::from(Error::Lexical {
+                span: SourceSpan::new(0, 1),
+                error: LexicalError::InvalidToken,
+            }),
+            EvalError::LexicalError(LexicalError::InvalidToken)
+        );
+        assert_eq!(
+            EvalError::from(Error::Parse(ParseDiagnostics {
+                diagnostics: vec![ParseDiagnostic {
+                    span: Some(SourceSpan::new(0, 1)),
+                    kind: ParseDiagnosticKind::InvalidToken,
+                }],
+            })),
+            EvalError::ParserError
+        );
+        assert_eq!(
+            EvalError::from(Error::Parse(ParseDiagnostics {
+                diagnostics: vec![ParseDiagnostic {
+                    span: Some(SourceSpan::new(2, 2)),
+                    kind: ParseDiagnosticKind::Recovery {
+                        dropped_tokens: Vec::new(),
+                        cause: Box::new(ParseDiagnosticKind::UnrecognizedEof {
+                            expected: vec!["Integer".to_owned()],
+                        }),
+                    },
+                }],
+            })),
+            EvalError::ParserRecovery { count: 1 }
+        );
+        assert_eq!(
+            EvalError::from(Error::Eval(EvalError::DivisionByZero)),
+            EvalError::DivisionByZero
+        );
+    }
+
+    #[test]
     fn parse_accepts_valid_expression() {
         assert!(parse("x + 2").is_ok());
     }
@@ -762,11 +1220,94 @@ mod tests {
     }
 
     #[test]
+    fn legacy_parse_still_maps_detailed_errors_to_eval_error() {
+        assert!(matches!(parse("$"), Err(EvalError::LexicalError(_))));
+        assert!(matches!(
+            parse("1 +"),
+            Err(EvalError::ParserRecovery { count: 1 })
+        ));
+
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options("1 + 2", &options),
+            Err(EvalError::ResourceLimit(
+                ResourceLimitError::InputTooLarge { actual: 5, max: 1 }
+            ))
+        ));
+    }
+
+    #[test]
+    fn parse_detailed_reports_lexical_span() {
+        assert!(matches!(
+            parse_detailed("$"),
+            Err(Error::Lexical {
+                span: SourceSpan { start: 0, end: 1 },
+                error: LexicalError::UnknownSymbol(_),
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_detailed_reports_token_stream_lexical_error_without_span() {
+        assert_eq!(
+            parse_tokens_with_options_detailed(
+                [Err(tokens::LexicalError::InvalidToken)],
+                &EvalOptions::default(),
+            ),
+            Err(Error::Lexical {
+                span: SourceSpan::new(0, 0),
+                error: LexicalError::InvalidToken,
+            })
+        );
+    }
+
+    #[test]
     fn parse_reports_parser_recovery() {
         assert!(matches!(
             parse("1 +"),
             Err(EvalError::ParserRecovery { count: 1 })
         ));
+    }
+
+    #[test]
+    fn parse_detailed_preserves_recovery_diagnostics() {
+        let diagnostics = match parse_detailed("1 +") {
+            Err(Error::Parse(diagnostics)) => diagnostics,
+            other => panic!("expected parse diagnostics, got {other:?}"),
+        };
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics.recovery_count(), 1);
+
+        let diagnostic = &diagnostics.diagnostics[0];
+        assert!(diagnostic.span.is_some());
+        assert!(matches!(
+            diagnostic.kind,
+            ParseDiagnosticKind::Recovery { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_detailed_recovery_preserves_cause_and_expected_tokens() {
+        let diagnostics = match parse_detailed("1 +") {
+            Err(Error::Parse(diagnostics)) => diagnostics,
+            other => panic!("expected parse diagnostics, got {other:?}"),
+        };
+
+        let diagnostic = &diagnostics.diagnostics[0];
+        let ParseDiagnosticKind::Recovery { cause, .. } = &diagnostic.kind else {
+            panic!("expected recovery diagnostic, got {diagnostic:?}");
+        };
+
+        match cause.as_ref() {
+            ParseDiagnosticKind::UnrecognizedEof { expected } => {
+                assert!(!expected.is_empty());
+            }
+            other => panic!("expected unrecognized EOF cause, got {other:?}"),
+        }
     }
 
     #[test]
@@ -840,6 +1381,56 @@ mod tests {
     }
 
     #[test]
+    fn parse_with_options_detailed_enforces_resource_limits() {
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options_detailed("1 + 2", &options),
+            Err(Error::ResourceLimit(ResourceLimitError::InputTooLarge {
+                actual: 5,
+                max: 1,
+            }))
+        ));
+
+        let options = EvalOptions {
+            max_tokens: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options_detailed("1 + 2", &options),
+            Err(Error::ResourceLimit(ResourceLimitError::TooManyTokens {
+                actual: 2,
+                max: 1,
+            }))
+        ));
+
+        let options = EvalOptions {
+            max_ast_nodes: 1,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options_detailed("1 + 2", &options),
+            Err(Error::ResourceLimit(ResourceLimitError::AstTooLarge {
+                actual: 2,
+                max: 1,
+            }))
+        ));
+
+        let options = EvalOptions {
+            max_parser_recoveries: 0,
+            ..EvalOptions::default()
+        };
+        assert!(matches!(
+            parse_with_options_detailed("1 +", &options),
+            Err(Error::ResourceLimit(
+                ResourceLimitError::TooManyParserRecoveries { actual: 1, max: 0 }
+            ))
+        ));
+    }
+
+    #[test]
     fn parsed_expression_can_be_evaluated_with_different_maps() {
         let parsed = match parse("x + 1") {
             Ok(parsed) => parsed,
@@ -905,6 +1496,116 @@ mod tests {
         let result = evaluate_parsed(&parsed, |_name: &str| Ok(Value::Float(f64::INFINITY)));
 
         assert_eq!(result, Err(EvalError::NonFiniteFloat));
+    }
+
+    #[test]
+    fn evaluate_parsed_detailed_rejects_invalid_resolver_float() {
+        let parsed = match parse("x") {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("unexpected parse error: {error:?}"),
+        };
+
+        let result =
+            evaluate_parsed_detailed(&parsed, |_name: &str| Ok(Value::Float(f64::INFINITY)));
+
+        assert_eq!(result, Err(Error::Eval(EvalError::NonFiniteFloat)));
+    }
+
+    #[test]
+    fn evaluate_detailed_wraps_eval_errors() {
+        let variables = HashMap::new();
+
+        assert_eq!(
+            evaluate_detailed("1 / 0", &variables),
+            Err(Error::Eval(EvalError::DivisionByZero))
+        );
+    }
+
+    #[test]
+    fn evaluate_with_resolver_detailed_accepts_callbacks() {
+        let result = evaluate_with_resolver_detailed("x + 2", |name: &str| match name {
+            "x" => Ok(Value::Integer(40)),
+            other => Err(EvalError::UnknownVariable(other.to_owned())),
+        });
+
+        assert_eq!(result, Ok(Value::Integer(42)));
+    }
+
+    #[test]
+    fn evaluate_with_resolver_detailed_accepts_named_resolver_type() {
+        struct RuntimeResolver;
+
+        impl VariableResolver for RuntimeResolver {
+            fn resolve(&mut self, name: &str) -> Result<Value, EvalError> {
+                match name {
+                    "x" => Ok(Value::Integer(40)),
+                    other => Err(EvalError::UnknownVariable(other.to_owned())),
+                }
+            }
+        }
+
+        assert_eq!(
+            evaluate_with_resolver_detailed("x + 2", RuntimeResolver),
+            Ok(Value::Integer(42))
+        );
+    }
+
+    #[test]
+    fn evaluate_with_options_and_resolver_detailed_preserves_error_stage() {
+        use std::cell::Cell;
+
+        let called = Cell::new(false);
+        let mut resolver = |_name: &str| {
+            called.set(true);
+            Ok(Value::Integer(0))
+        };
+
+        let options = EvalOptions {
+            max_input_bytes: 1,
+            ..EvalOptions::default()
+        };
+
+        assert_eq!(
+            evaluate_with_options_and_resolver_detailed("1 + 2", &mut resolver, &options),
+            Err(Error::ResourceLimit(ResourceLimitError::InputTooLarge {
+                actual: 5,
+                max: 1,
+            }))
+        );
+        assert!(!called.get());
+
+        assert!(matches!(
+            evaluate_with_options_and_resolver_detailed(
+                "$",
+                &mut resolver,
+                &EvalOptions::default()
+            ),
+            Err(Error::Lexical {
+                span: SourceSpan { start: 0, end: 1 },
+                ..
+            })
+        ));
+        assert!(!called.get());
+
+        assert!(matches!(
+            evaluate_with_options_and_resolver_detailed(
+                "1 +",
+                &mut resolver,
+                &EvalOptions::default()
+            ),
+            Err(Error::Parse(_))
+        ));
+        assert!(!called.get());
+
+        assert_eq!(
+            evaluate_with_options_and_resolver_detailed(
+                "x",
+                &mut resolver,
+                &EvalOptions::default()
+            ),
+            Ok(Value::Integer(0))
+        );
+        assert!(called.get());
     }
 
     #[test]
@@ -1518,6 +2219,23 @@ mod tests {
             let direct = evaluate(&expression, &variables);
 
             prop_assert_eq!(parse_then_eval, direct);
+        }
+
+        #[test]
+        fn prop_detailed_and_legacy_evaluate_match_for_valid_inputs(
+            name in variable_name(),
+            value in -1_000_000i64..1_000_000,
+            addend in -1_000_000i64..1_000_000,
+        ) {
+            let expression = format!("{name} + {addend}");
+            let mut variables = HashMap::new();
+            variables.insert(name.clone(), Value::Integer(value));
+
+            let legacy = evaluate(&expression, &variables);
+            let detailed = evaluate_detailed(&expression, &variables)
+                .map_err(EvalError::from);
+
+            prop_assert_eq!(legacy, detailed);
         }
 
         #[test]

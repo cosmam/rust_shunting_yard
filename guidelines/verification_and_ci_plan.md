@@ -43,6 +43,10 @@ cargo fuzz build evaluate_no_panic
 cargo fuzz run evaluate_no_panic
 ```
 
+GitLab CI has a manual `fuzz:evaluate_no_panic` job in `.gitlab-ci.yml`.
+It uses a Rust nightly container and shell commands instead of Node-backed
+GitHub Actions, which avoids runner failures caused by older Node.js runtimes.
+
 The target accepts arbitrary bytes, ignores invalid UTF-8, and passes valid
 UTF-8 into `evaluate` with an empty variable map. Its purpose is crash and panic
 detection, not semantic correctness.
@@ -124,3 +128,13 @@ Parse/evaluate separation must preserve the existing safety model:
   before evaluation;
 - evaluate-parsed APIs must still validate resolver-returned values;
 - no new unsafe code should be introduced.
+
+Diagnostic-aware APIs must preserve compatibility:
+
+- detailed APIs must return `Error::Lexical`, `Error::Parse`,
+  `Error::ResourceLimit`, or `Error::Eval` according to the failure stage;
+- legacy APIs must continue returning their existing `EvalError` variants;
+- converting detailed errors into legacy `EvalError` must preserve existing
+  public behavior;
+- tests should match structured variants and avoid depending on free-form
+  display strings.
