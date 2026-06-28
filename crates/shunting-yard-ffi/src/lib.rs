@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::ptr;
 
 /// Status code returned by FFI functions.
 pub type ShyStatus = i32;
@@ -31,6 +32,84 @@ pub const SHY_VALUE_INTEGER: i32 = 1;
 /// Floating-point value kind at the C ABI boundary.
 pub const SHY_VALUE_FLOAT: i32 = 2;
 
+/// No error stage is available.
+pub const SHY_ERROR_STAGE_NONE: i32 = 0;
+/// Failure happened while validating FFI input.
+pub const SHY_ERROR_STAGE_INPUT: i32 = 1;
+/// Failure happened during lexical analysis.
+pub const SHY_ERROR_STAGE_LEXICAL: i32 = 2;
+/// Failure happened during parsing.
+pub const SHY_ERROR_STAGE_PARSE: i32 = 3;
+/// A configured resource limit was exceeded.
+pub const SHY_ERROR_STAGE_RESOURCE_LIMIT: i32 = 4;
+/// Failure happened during evaluation.
+pub const SHY_ERROR_STAGE_EVALUATION: i32 = 5;
+/// Failure came from a variable resolver callback.
+pub const SHY_ERROR_STAGE_RESOLVER: i32 = 6;
+/// A Rust panic was caught at the FFI boundary.
+pub const SHY_ERROR_STAGE_PANIC: i32 = 7;
+/// A callback returned an invalid FFI value.
+pub const SHY_ERROR_STAGE_INVALID_VALUE: i32 = 8;
+
+/// No error code is available.
+pub const SHY_ERROR_CODE_NONE: i32 = 0;
+/// A required pointer argument was null.
+pub const SHY_ERROR_CODE_NULL_POINTER: i32 = 1;
+/// The input C string was not valid UTF-8.
+pub const SHY_ERROR_CODE_INVALID_UTF8: i32 = 2;
+/// A Rust panic was caught at the FFI boundary.
+pub const SHY_ERROR_CODE_PANIC: i32 = 3;
+/// The lexer rejected the source text.
+pub const SHY_ERROR_CODE_LEXICAL_ERROR: i32 = 100;
+/// The parser rejected the source text.
+pub const SHY_ERROR_CODE_PARSE_ERROR: i32 = 200;
+/// The parser recovered from malformed source text.
+pub const SHY_ERROR_CODE_PARSE_RECOVERY: i32 = 201;
+/// A resource limit was exceeded.
+pub const SHY_ERROR_CODE_RESOURCE_LIMIT: i32 = 300;
+/// Input exceeded the maximum byte length.
+pub const SHY_ERROR_CODE_INPUT_TOO_LARGE: i32 = 301;
+/// Token count exceeded the configured maximum.
+pub const SHY_ERROR_CODE_TOO_MANY_TOKENS: i32 = 302;
+/// AST node count exceeded the configured maximum.
+pub const SHY_ERROR_CODE_AST_TOO_LARGE: i32 = 303;
+/// AST nesting depth exceeded the configured maximum.
+pub const SHY_ERROR_CODE_EXPRESSION_TOO_DEEP: i32 = 304;
+/// A function call had too many arguments.
+pub const SHY_ERROR_CODE_TOO_MANY_FUNCTION_ARGUMENTS: i32 = 305;
+/// Parser recovery count exceeded the configured maximum.
+pub const SHY_ERROR_CODE_TOO_MANY_PARSER_RECOVERIES: i32 = 306;
+/// Evaluation failed without a more specific stable code.
+pub const SHY_ERROR_CODE_EVAL_ERROR: i32 = 400;
+/// An operator or function had an invalid operand count.
+pub const SHY_ERROR_CODE_INVALID_ARITY: i32 = 401;
+/// An operator or function received an invalid value type.
+pub const SHY_ERROR_CODE_INVALID_TYPE: i32 = 402;
+/// Division, modulo, or remainder by zero.
+pub const SHY_ERROR_CODE_DIVISION_BY_ZERO: i32 = 403;
+/// Checked integer arithmetic overflowed.
+pub const SHY_ERROR_CODE_INTEGER_OVERFLOW: i32 = 404;
+/// A shift count was negative or too large.
+pub const SHY_ERROR_CODE_INVALID_SHIFT_COUNT: i32 = 405;
+/// An exponent was invalid.
+pub const SHY_ERROR_CODE_INVALID_EXPONENT: i32 = 406;
+/// A rounding precision was invalid.
+pub const SHY_ERROR_CODE_INVALID_PRECISION: i32 = 407;
+/// A floating-point result was NaN or infinite.
+pub const SHY_ERROR_CODE_NON_FINITE_FLOAT: i32 = 408;
+/// A floating-point result was subnormal.
+pub const SHY_ERROR_CODE_SUBNORMAL_FLOAT: i32 = 409;
+/// Evaluation encountered an unexpected opcode.
+pub const SHY_ERROR_CODE_UNEXPECTED_OPCODE: i32 = 410;
+/// A variable name could not be resolved.
+pub const SHY_ERROR_CODE_UNKNOWN_VARIABLE: i32 = 411;
+/// The expression tree was invalid.
+pub const SHY_ERROR_CODE_INVALID_EXPRESSION: i32 = 412;
+/// A variable resolver callback failed.
+pub const SHY_ERROR_CODE_RESOLVER_ERROR: i32 = 500;
+/// A callback returned an unknown ShyValue kind.
+pub const SHY_ERROR_CODE_INVALID_VALUE_KIND: i32 = 600;
+
 /// Runtime value kind returned through the C ABI.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +134,21 @@ pub struct ShyValue {
     pub integer_value: i64,
     /// Floating-point payload.
     pub float_value: f64,
+}
+
+/// Opaque error object returned by extended FFI entrypoints.
+///
+/// C callers must release pointers to this type with [`shy_error_free`].
+#[repr(C)]
+pub struct ShyError {
+    status: ShyStatus,
+    stage: i32,
+    code: i32,
+    message: CString,
+    has_span: i32,
+    span_start: i32,
+    span_end: i32,
+    diagnostic_count: i32,
 }
 
 /// C callback used to resolve variable names during evaluation.
@@ -113,6 +207,170 @@ impl ShyValue {
             },
         }
     }
+}
+
+/// Free an error object returned by an extended FFI entrypoint.
+///
+/// # Safety
+///
+/// `error` must be null or a pointer returned by this crate through an
+/// `out_error` parameter. It must not have been freed already.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_free(error: *mut ShyError) {
+    if error.is_null() {
+        return;
+    }
+
+    // SAFETY:
+    // - error must have been returned by this crate through an out_error parameter.
+    // - Box::from_raw takes ownership and drops the allocation exactly once.
+    unsafe { drop(Box::from_raw(error)) };
+}
+
+/// Return the status associated with an error object.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_status(error: *const ShyError) -> ShyStatus {
+    if error.is_null() {
+        return SHY_STATUS_NULL_POINTER;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).status }
+}
+
+/// Return the stage associated with an error object.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_stage(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return SHY_ERROR_STAGE_NONE;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).stage }
+}
+
+/// Return the stable code associated with an error object.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_code(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return SHY_ERROR_CODE_NULL_POINTER;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).code }
+}
+
+/// Return a borrowed human-readable error message.
+///
+/// The returned pointer remains valid until `shy_error_free(error)`.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_message(error: *const ShyError) -> *const c_char {
+    if error.is_null() {
+        return ptr::null();
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).message.as_ptr() }
+}
+
+/// Return nonzero when an error object contains a source span.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_has_span(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return 0;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).has_span }
+}
+
+/// Return the inclusive start byte offset for an error source span.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_span_start(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return -1;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).span_start }
+}
+
+/// Return the exclusive end byte offset for an error source span.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_span_end(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return -1;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).span_end }
+}
+
+/// Return the number of diagnostics represented by an error object.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_diagnostic_count(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return 0;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).diagnostic_count }
 }
 
 struct FfiResolver {
