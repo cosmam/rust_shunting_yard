@@ -6,9 +6,9 @@
 #include "shunting_yard_ffi.h"
 
 _Static_assert(sizeof(ShyStatus) == 4, "ShyStatus must be 4 bytes");
-_Static_assert(sizeof(ShyValueKind) == 4, "ShyValueKind must be 4 bytes");
 
 _Static_assert(offsetof(ShyValue, kind) == 0, "kind offset mismatch");
+_Static_assert(sizeof(((ShyValue *)0)->kind) == 4, "ShyValue.kind must be int32_t");
 _Static_assert(
     offsetof(ShyValue, bool_value) > offsetof(ShyValue, kind),
     "bool_value offset mismatch"

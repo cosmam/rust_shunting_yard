@@ -20,18 +20,27 @@ pub enum ShyStatus {
     EvaluationError = 3,
     /// A Rust panic was caught before crossing the ABI boundary.
     Panic = 4,
+    /// The callback returned a value kind that is not recognized.
+    InvalidValue = 6,
 }
+
+/// Boolean value kind at the C ABI boundary.
+pub const SHY_VALUE_BOOL: i32 = 0;
+/// Signed integer value kind at the C ABI boundary.
+pub const SHY_VALUE_INTEGER: i32 = 1;
+/// Floating-point value kind at the C ABI boundary.
+pub const SHY_VALUE_FLOAT: i32 = 2;
 
 /// Runtime value kind returned through the C ABI.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShyValueKind {
     /// Boolean value.
-    Bool = 0,
+    Bool = SHY_VALUE_BOOL,
     /// Signed integer value.
-    Integer = 1,
+    Integer = SHY_VALUE_INTEGER,
     /// Floating-point value.
-    Float = 2,
+    Float = SHY_VALUE_FLOAT,
 }
 
 /// Runtime value returned through the C ABI.
@@ -39,7 +48,7 @@ pub enum ShyValueKind {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShyValue {
     /// Active value field.
-    pub kind: ShyValueKind,
+    pub kind: i32,
     /// Boolean payload. Zero is false; nonzero is true.
     pub bool_value: u8,
     /// Integer payload.
@@ -52,23 +61,36 @@ impl ShyValue {
     fn from_value(value: shunting_yard::Value) -> Self {
         match value {
             shunting_yard::Value::Bool(value) => Self {
-                kind: ShyValueKind::Bool,
+                kind: SHY_VALUE_BOOL,
                 bool_value: u8::from(value),
                 integer_value: 0,
                 float_value: 0.0,
             },
             shunting_yard::Value::Integer(value) => Self {
-                kind: ShyValueKind::Integer,
+                kind: SHY_VALUE_INTEGER,
                 bool_value: 0,
                 integer_value: value,
                 float_value: 0.0,
             },
             shunting_yard::Value::Float(value) => Self {
-                kind: ShyValueKind::Float,
+                kind: SHY_VALUE_FLOAT,
                 bool_value: 0,
                 integer_value: 0,
                 float_value: value,
             },
+        }
+    }
+}
+
+impl TryFrom<ShyValue> for shunting_yard::Value {
+    type Error = ShyStatus;
+
+    fn try_from(value: ShyValue) -> Result<Self, Self::Error> {
+        match value.kind {
+            SHY_VALUE_BOOL => Ok(shunting_yard::Value::Bool(value.bool_value != 0)),
+            SHY_VALUE_INTEGER => Ok(shunting_yard::Value::Integer(value.integer_value)),
+            SHY_VALUE_FLOAT => Ok(shunting_yard::Value::Float(value.float_value)),
+            _ => Err(ShyStatus::InvalidValue),
         }
     }
 }
@@ -141,5 +163,49 @@ mod tests {
         let status = ffi_boundary(|| panic!("intentional test panic"));
 
         assert_eq!(status, ShyStatus::Panic);
+    }
+
+    #[test]
+    fn shy_value_converts_to_core_value() {
+        assert_eq!(
+            shunting_yard::Value::try_from(ShyValue {
+                kind: SHY_VALUE_BOOL,
+                bool_value: 1,
+                integer_value: 0,
+                float_value: 0.0,
+            }),
+            Ok(shunting_yard::Value::Bool(true))
+        );
+        assert_eq!(
+            shunting_yard::Value::try_from(ShyValue {
+                kind: SHY_VALUE_INTEGER,
+                bool_value: 0,
+                integer_value: 42,
+                float_value: 0.0,
+            }),
+            Ok(shunting_yard::Value::Integer(42))
+        );
+        assert_eq!(
+            shunting_yard::Value::try_from(ShyValue {
+                kind: SHY_VALUE_FLOAT,
+                bool_value: 0,
+                integer_value: 0,
+                float_value: 3.5,
+            }),
+            Ok(shunting_yard::Value::Float(3.5))
+        );
+    }
+
+    #[test]
+    fn shy_value_rejects_unknown_kind() {
+        assert_eq!(
+            shunting_yard::Value::try_from(ShyValue {
+                kind: 999,
+                bool_value: 0,
+                integer_value: 0,
+                float_value: 0.0,
+            }),
+            Err(ShyStatus::InvalidValue)
+        );
     }
 }

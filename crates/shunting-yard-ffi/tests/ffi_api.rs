@@ -1,11 +1,14 @@
 use std::ffi::CString;
 use std::ptr;
 
-use shunting_yard_ffi::{ShyStatus, ShyValue, ShyValueKind, shy_evaluate_no_vars};
+use shunting_yard_ffi::{
+    SHY_VALUE_BOOL, SHY_VALUE_FLOAT, SHY_VALUE_INTEGER, ShyStatus, ShyValue, ShyValueKind,
+    shy_evaluate_no_vars,
+};
 
 fn default_test_value() -> ShyValue {
     ShyValue {
-        kind: ShyValueKind::Integer,
+        kind: SHY_VALUE_INTEGER,
         bool_value: 7,
         integer_value: -1,
         float_value: -1.0,
@@ -67,7 +70,7 @@ fn evaluate_no_vars_returns_integer_value() {
     let status = evaluate(expression.as_ptr(), &mut out);
 
     assert_eq!(status, ShyStatus::Ok);
-    assert_eq!(out.kind, ShyValueKind::Integer);
+    assert_eq!(out.kind, SHY_VALUE_INTEGER);
     assert_eq!(out.integer_value, 3);
     assert_eq!(out.bool_value, 0);
     assert_eq!(out.float_value, 0.0);
@@ -81,7 +84,7 @@ fn evaluate_no_vars_returns_bool_value() {
     let status = evaluate(expression.as_ptr(), &mut out);
 
     assert_eq!(status, ShyStatus::Ok);
-    assert_eq!(out.kind, ShyValueKind::Bool);
+    assert_eq!(out.kind, SHY_VALUE_BOOL);
     assert_eq!(out.bool_value, 1);
     assert_eq!(out.integer_value, 0);
     assert_eq!(out.float_value, 0.0);
@@ -95,7 +98,7 @@ fn evaluate_no_vars_returns_float_value() {
     let status = evaluate(expression.as_ptr(), &mut out);
 
     assert_eq!(status, ShyStatus::Ok);
-    assert_eq!(out.kind, ShyValueKind::Float);
+    assert_eq!(out.kind, SHY_VALUE_FLOAT);
     assert_eq!(out.bool_value, 0);
     assert_eq!(out.integer_value, 0);
     assert_eq!(out.float_value, 3.5);

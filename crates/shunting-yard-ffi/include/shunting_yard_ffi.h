@@ -13,16 +13,17 @@ typedef enum ShyStatus {
     SHY_STATUS_INVALID_UTF8 = 2,
     SHY_STATUS_EVALUATION_ERROR = 3,
     SHY_STATUS_PANIC = 4,
+    SHY_STATUS_INVALID_VALUE = 6,
 } ShyStatus;
 
-typedef enum ShyValueKind {
+enum {
     SHY_VALUE_BOOL = 0,
     SHY_VALUE_INTEGER = 1,
     SHY_VALUE_FLOAT = 2,
-} ShyValueKind;
+};
 
 typedef struct ShyValue {
-    ShyValueKind kind;
+    int32_t kind;
     uint8_t bool_value;
     int64_t integer_value;
     double float_value;
