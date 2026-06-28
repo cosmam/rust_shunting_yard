@@ -227,6 +227,113 @@ static void test_callback_null_expression(void) {
     assert(value.integer_value == -1);
 }
 
+static void test_no_vars_ex_success_clears_error(void) {
+    ShyValue value = {0};
+    ShyError *error = (ShyError *)1;
+    ShyStatus status = shy_evaluate_no_vars_ex("1 + 2", &value, &error);
+
+    assert(status == SHY_STATUS_OK);
+    assert(error == NULL);
+    assert(value.kind == SHY_VALUE_INTEGER);
+    assert(value.integer_value == 3);
+}
+
+static void test_no_vars_ex_reports_division_by_zero(void) {
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyError *error = NULL;
+    ShyStatus status = shy_evaluate_no_vars_ex("1 / 0", &value, &error);
+
+    assert(status == SHY_STATUS_EVALUATION_ERROR);
+    assert(value.integer_value == -1);
+    assert(error != NULL);
+    assert(shy_error_status(error) == SHY_STATUS_EVALUATION_ERROR);
+    assert(shy_error_stage(error) == SHY_ERROR_STAGE_EVALUATION);
+    assert(shy_error_code(error) == SHY_ERROR_CODE_DIVISION_BY_ZERO);
+    assert(shy_error_message(error) != NULL);
+
+    shy_error_free(error);
+}
+
+static void test_no_vars_ex_reports_lexical_span(void) {
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyError *error = NULL;
+    ShyStatus status = shy_evaluate_no_vars_ex("$", &value, &error);
+
+    assert(status == SHY_STATUS_EVALUATION_ERROR);
+    assert(value.integer_value == -1);
+    assert(error != NULL);
+    assert(shy_error_stage(error) == SHY_ERROR_STAGE_LEXICAL);
+    assert(shy_error_code(error) == SHY_ERROR_CODE_LEXICAL_ERROR);
+    assert(shy_error_has_span(error) == 1);
+    assert(shy_error_span_start(error) == 0);
+    assert(shy_error_span_end(error) == 1);
+    assert(shy_error_diagnostic_count(error) == 1);
+
+    shy_error_free(error);
+}
+
+static void test_no_vars_ex_error_output_may_be_null(void) {
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyStatus status = shy_evaluate_no_vars_ex("1 / 0", &value, NULL);
+
+    assert(status == SHY_STATUS_EVALUATION_ERROR);
+    assert(value.integer_value == -1);
+}
+
+static void test_callback_ex_reports_resolver_error(void) {
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyError *error = NULL;
+    ShyStatus status = shy_evaluate_with_callback_ex(
+        "x",
+        failing_resolver,
+        NULL,
+        &value,
+        &error
+    );
+
+    assert(status == SHY_STATUS_RESOLVER_ERROR);
+    assert(value.integer_value == -1);
+    assert(error != NULL);
+    assert(shy_error_status(error) == SHY_STATUS_RESOLVER_ERROR);
+    assert(shy_error_stage(error) == SHY_ERROR_STAGE_RESOLVER);
+    assert(shy_error_code(error) == SHY_ERROR_CODE_RESOLVER_ERROR);
+
+    shy_error_free(error);
+}
+
+static void test_callback_ex_reports_invalid_value_kind(void) {
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyError *error = NULL;
+    ShyStatus status = shy_evaluate_with_callback_ex(
+        "x",
+        invalid_kind_resolver,
+        NULL,
+        &value,
+        &error
+    );
+
+    assert(status == SHY_STATUS_INVALID_VALUE);
+    assert(value.integer_value == -1);
+    assert(error != NULL);
+    assert(shy_error_status(error) == SHY_STATUS_INVALID_VALUE);
+    assert(shy_error_stage(error) == SHY_ERROR_STAGE_INVALID_VALUE);
+    assert(shy_error_code(error) == SHY_ERROR_CODE_INVALID_VALUE_KIND);
+
+    shy_error_free(error);
+}
+
+static void test_error_accessors_handle_null(void) {
+    assert(shy_error_status(NULL) == SHY_STATUS_NULL_POINTER);
+    assert(shy_error_stage(NULL) == SHY_ERROR_STAGE_NONE);
+    assert(shy_error_code(NULL) == SHY_ERROR_CODE_NULL_POINTER);
+    assert(shy_error_message(NULL) == NULL);
+    assert(shy_error_has_span(NULL) == 0);
+    assert(shy_error_span_start(NULL) == -1);
+    assert(shy_error_span_end(NULL) == -1);
+    assert(shy_error_diagnostic_count(NULL) == 0);
+    shy_error_free(NULL);
+}
+
 int main(void) {
     test_integer_success();
     test_null_expression();
@@ -240,6 +347,13 @@ int main(void) {
     test_callback_invalid_value_kind();
     test_callback_invalid_status();
     test_callback_null_expression();
+    test_no_vars_ex_success_clears_error();
+    test_no_vars_ex_reports_division_by_zero();
+    test_no_vars_ex_reports_lexical_span();
+    test_no_vars_ex_error_output_may_be_null();
+    test_callback_ex_reports_resolver_error();
+    test_callback_ex_reports_invalid_value_kind();
+    test_error_accessors_handle_null();
 
     puts("shunting_yard_ffi smoke test passed");
     return 0;
