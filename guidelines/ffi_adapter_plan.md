@@ -32,6 +32,13 @@ The core crate remains unsafe-free.
 - No parse/evaluate object handles yet.
 - C smoke testing is Linux-first.
 
+## C Smoke Test
+
+The initial C smoke test is Linux-first and exercises the dynamic library path
+by linking with `-lshunting_yard_ffi` and setting `LD_LIBRARY_PATH` to
+`target/debug`. Static-library smoke testing can be added as a separate
+follow-up.
+
 ## Next Planned FFI Step
 
 Add C callback resolver support:

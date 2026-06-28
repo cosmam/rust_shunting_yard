@@ -62,4 +62,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: ./c-tests/run-smoke.sh
+      - run: bash ./c-tests/run-smoke.sh
