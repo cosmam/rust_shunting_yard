@@ -200,10 +200,7 @@ fn cstring_lossy_no_nul(message: impl Into<String>) -> CString {
 }
 
 fn usize_to_i32_saturating(value: usize) -> i32 {
-    match i32::try_from(value) {
-        Ok(value) => value,
-        Err(_) => i32::MAX,
-    }
+    i32::try_from(value).unwrap_or(i32::MAX)
 }
 
 struct ErrorParts {
