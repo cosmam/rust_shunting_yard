@@ -5,13 +5,13 @@ use shunting_yard_ffi::{
     SHY_ERROR_CODE_DIVISION_BY_ZERO, SHY_ERROR_CODE_INPUT_TOO_LARGE, SHY_ERROR_CODE_INVALID_UTF8,
     SHY_ERROR_CODE_INVALID_VALUE_KIND, SHY_ERROR_CODE_LEXICAL_ERROR,
     SHY_ERROR_CODE_NON_FINITE_FLOAT, SHY_ERROR_CODE_NULL_POINTER, SHY_ERROR_CODE_PARSE_RECOVERY,
-    SHY_ERROR_CODE_RESOLVER_ERROR, SHY_ERROR_STAGE_EVALUATION, SHY_ERROR_STAGE_INPUT,
-    SHY_ERROR_STAGE_INVALID_VALUE, SHY_ERROR_STAGE_LEXICAL, SHY_ERROR_STAGE_NONE,
-    SHY_ERROR_STAGE_PARSE, SHY_ERROR_STAGE_RESOLVER, SHY_ERROR_STAGE_RESOURCE_LIMIT,
-    SHY_STATUS_EVALUATION_ERROR, SHY_STATUS_INVALID_UTF8, SHY_STATUS_INVALID_VALUE,
-    SHY_STATUS_NULL_POINTER, SHY_STATUS_OK, SHY_STATUS_RESOLVER_ERROR, SHY_VALUE_BOOL,
-    SHY_VALUE_FLOAT, SHY_VALUE_INTEGER, ShyError, ShyStatus, ShyValue, ShyValueKind,
-    ShyVariableResolver, shy_error_code, shy_error_diagnostic_count, shy_error_free,
+    SHY_ERROR_CODE_RESOLVER_ERROR, SHY_ERROR_CODE_SUBNORMAL_FLOAT, SHY_ERROR_STAGE_EVALUATION,
+    SHY_ERROR_STAGE_INPUT, SHY_ERROR_STAGE_INVALID_VALUE, SHY_ERROR_STAGE_LEXICAL,
+    SHY_ERROR_STAGE_NONE, SHY_ERROR_STAGE_PARSE, SHY_ERROR_STAGE_RESOLVER,
+    SHY_ERROR_STAGE_RESOURCE_LIMIT, SHY_STATUS_EVALUATION_ERROR, SHY_STATUS_INVALID_UTF8,
+    SHY_STATUS_INVALID_VALUE, SHY_STATUS_NULL_POINTER, SHY_STATUS_OK, SHY_STATUS_RESOLVER_ERROR,
+    SHY_VALUE_BOOL, SHY_VALUE_FLOAT, SHY_VALUE_INTEGER, ShyError, ShyStatus, ShyValue,
+    ShyValueKind, ShyVariableResolver, shy_error_code, shy_error_diagnostic_count, shy_error_free,
     shy_error_has_span, shy_error_message, shy_error_span_end, shy_error_span_start,
     shy_error_stage, shy_error_status, shy_evaluate_no_vars, shy_evaluate_no_vars_ex,
     shy_evaluate_with_callback, shy_evaluate_with_callback_ex,
@@ -567,6 +567,26 @@ fn callback_ex_null_resolver_reports_input_error() {
 }
 
 #[test]
+fn callback_ex_success_clears_error() {
+    let expression = c_string("x + 2");
+    let mut out = default_test_value();
+    let mut error = ptr::NonNull::<ShyError>::dangling().as_ptr();
+
+    let status = evaluate_with_callback_ex(
+        expression.as_ptr(),
+        Some(resolve_x_to_integer),
+        ptr::null_mut(),
+        &mut out,
+        &mut error,
+    );
+
+    assert_eq!(status, SHY_STATUS_OK);
+    assert!(error.is_null());
+    assert_eq!(out.kind, SHY_VALUE_INTEGER);
+    assert_eq!(out.integer_value, 42);
+}
+
+#[test]
 fn callback_ex_resolver_error_reports_resolver_stage() {
     let expression = c_string("x + 2");
     let mut out = default_test_value();
@@ -635,6 +655,28 @@ fn callback_ex_non_finite_float_reports_evaluation_error() {
     let error = ErrorHandle::new(error);
     assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_EVALUATION);
     assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_NON_FINITE_FLOAT);
+}
+
+#[test]
+fn callback_ex_subnormal_float_reports_evaluation_error() {
+    let expression = c_string("x");
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_callback_ex(
+        expression.as_ptr(),
+        Some(subnormal_float_resolver),
+        ptr::null_mut(),
+        &mut out,
+        &mut error,
+    );
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_EVALUATION);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_SUBNORMAL_FLOAT);
 }
 
 #[test]

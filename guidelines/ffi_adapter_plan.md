@@ -95,5 +95,6 @@ the core evaluator and reported through the FFI as evaluation errors.
 
 ## Next Planned FFI Step
 
-Add structured diagnostic reporting for parse, resource-limit, and evaluation
-failures without returning Rust-owned strings through the current value API.
+Add opaque parsed-expression handles so C callers can parse once, evaluate many
+times, and free the parsed expression explicitly. Full parse-diagnostic
+iteration can follow as a later diagnostic expansion.

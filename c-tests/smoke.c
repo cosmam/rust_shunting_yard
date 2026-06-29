@@ -238,6 +238,25 @@ static void test_no_vars_ex_success_clears_error(void) {
     assert(value.integer_value == 3);
 }
 
+static void test_callback_ex_success_clears_error(void) {
+    TestContext context = {.value = 40, .calls = 0};
+    ShyValue value = {0};
+    ShyError *error = (ShyError *)1;
+    ShyStatus status = shy_evaluate_with_callback_ex(
+        "x + 2",
+        resolve_from_context,
+        &context,
+        &value,
+        &error
+    );
+
+    assert(status == SHY_STATUS_OK);
+    assert(error == NULL);
+    assert(value.kind == SHY_VALUE_INTEGER);
+    assert(value.integer_value == 42);
+    assert(context.calls == 1);
+}
+
 static void test_no_vars_ex_reports_division_by_zero(void) {
     ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
     ShyError *error = NULL;
@@ -348,6 +367,7 @@ int main(void) {
     test_callback_invalid_status();
     test_callback_null_expression();
     test_no_vars_ex_success_clears_error();
+    test_callback_ex_success_clears_error();
     test_no_vars_ex_reports_division_by_zero();
     test_no_vars_ex_reports_lexical_span();
     test_no_vars_ex_error_output_may_be_null();
