@@ -202,6 +202,14 @@ impl<'input> ParsedExpression<'input> {
     fn new(ast: ast::Expression<'input>) -> Self {
         Self { ast }
     }
+
+    /// Convert this parsed expression into an owned form that no longer borrows
+    /// from the original input text.
+    pub fn into_owned(self) -> ParsedExpression<'static> {
+        ParsedExpression {
+            ast: self.ast.into_owned(),
+        }
+    }
 }
 
 /// Byte range in the original source text.
@@ -1445,6 +1453,22 @@ mod tests {
 
         assert_eq!(evaluate_parsed(&parsed, &first), Ok(Value::Integer(2)));
         assert_eq!(evaluate_parsed(&parsed, &second), Ok(Value::Integer(42)));
+    }
+
+    #[test]
+    fn parsed_expression_into_owned_survives_source_drop() {
+        let parsed = {
+            let source = String::from("x + 1");
+            match parse(&source) {
+                Ok(parsed) => parsed.into_owned(),
+                Err(error) => panic!("unexpected parse error: {error:?}"),
+            }
+        };
+
+        let mut variables = HashMap::new();
+        variables.insert("x".to_owned(), Value::Integer(41));
+
+        assert_eq!(evaluate_parsed(&parsed, &variables), Ok(Value::Integer(42)));
     }
 
     #[test]

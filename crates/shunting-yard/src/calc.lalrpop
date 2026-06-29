@@ -315,7 +315,7 @@ pub Term: Box<ast::Expression<'input>> = {
         Box::new(ast::Expression::Float(val))
     },
     <val:"variable"> => {
-        Box::new(ast::Expression::Variable(val))
+        Box::new(ast::Expression::Variable(val.into()))
     },
     "(" <Expression> ")",
     FunctionCall,
