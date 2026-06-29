@@ -615,6 +615,27 @@ fn parsed_no_vars_evaluates_repeatedly() {
 }
 
 #[test]
+fn parsed_no_vars_ex_success_clears_error() {
+    let expression = c_string("1 + 2");
+    let mut parsed = ptr::null_mut();
+    let mut out = default_test_value();
+    let mut error = ptr::NonNull::<ShyError>::dangling().as_ptr();
+
+    assert_eq!(
+        parse_expression(expression.as_ptr(), &mut parsed),
+        SHY_STATUS_OK
+    );
+    let parsed = ParsedHandle::new(parsed);
+
+    let status = evaluate_parsed_no_vars_ex(parsed.as_ptr(), &mut out, &mut error);
+
+    assert_eq!(status, SHY_STATUS_OK);
+    assert!(error.is_null());
+    assert_eq!(out.kind, SHY_VALUE_INTEGER);
+    assert_eq!(out.integer_value, 3);
+}
+
+#[test]
 fn parsed_no_vars_ex_rejects_null_handle() {
     let mut out = default_test_value();
     let mut error = ptr::null_mut();
@@ -694,6 +715,38 @@ fn parsed_callback_evaluates_with_runtime_user_data() {
     assert_eq!(out.integer_value, 12);
     assert_eq!(first.calls, 1);
     assert_eq!(second.calls, 1);
+}
+
+#[test]
+fn parsed_callback_ex_success_clears_error() {
+    let expression = c_string("x + 2");
+    let mut parsed = ptr::null_mut();
+    let mut context = TestContext {
+        value: 40,
+        calls: 0,
+    };
+    let mut out = default_test_value();
+    let mut error = ptr::NonNull::<ShyError>::dangling().as_ptr();
+
+    assert_eq!(
+        parse_expression(expression.as_ptr(), &mut parsed),
+        SHY_STATUS_OK
+    );
+    let parsed = ParsedHandle::new(parsed);
+
+    let status = evaluate_parsed_with_callback_ex(
+        parsed.as_ptr(),
+        Some(resolve_from_user_data),
+        ptr::from_mut(&mut context).cast(),
+        &mut out,
+        &mut error,
+    );
+
+    assert_eq!(status, SHY_STATUS_OK);
+    assert!(error.is_null());
+    assert_eq!(out.kind, SHY_VALUE_INTEGER);
+    assert_eq!(out.integer_value, 42);
+    assert_eq!(context.calls, 1);
 }
 
 #[test]
