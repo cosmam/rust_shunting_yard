@@ -82,6 +82,7 @@ typedef struct ShyValue {
 } ShyValue;
 
 typedef struct ShyError ShyError;
+typedef struct ShyParsedExpression ShyParsedExpression;
 
 /*
  * Callback used to resolve variable names.
@@ -109,6 +110,39 @@ typedef ShyStatus (*ShyVariableResolver)(
     void *user_data,
     ShyValue *out_value
 );
+
+/*
+ * Parse an expression into an opaque handle.
+ *
+ * On success, out_expression receives a non-NULL handle that must be released
+ * with shy_parsed_expression_free. On failure, *out_expression is set to NULL
+ * when out_expression is non-NULL.
+ */
+ShyStatus shy_parse_expression(
+    const char *expression,
+    ShyParsedExpression **out_expression
+);
+
+/*
+ * Extended parse function with optional error object reporting.
+ *
+ * If out_error is not NULL, *out_error is set to NULL on success. On failure,
+ * *out_error receives an owned ShyError that must be released with
+ * shy_error_free. Passing out_error as NULL is allowed and disables error
+ * object allocation.
+ */
+ShyStatus shy_parse_expression_ex(
+    const char *expression,
+    ShyParsedExpression **out_expression,
+    ShyError **out_error
+);
+
+/*
+ * Free a parsed-expression handle returned through shy_parse_expression*.
+ * Passing NULL is allowed. Handles are immutable and must not be used after
+ * they are freed.
+ */
+void shy_parsed_expression_free(ShyParsedExpression *expression);
 
 ShyStatus shy_evaluate_no_vars(
     const char *expression,
@@ -146,6 +180,48 @@ ShyStatus shy_evaluate_with_callback(
  */
 ShyStatus shy_evaluate_with_callback_ex(
     const char *expression,
+    ShyVariableResolver resolver,
+    void *user_data,
+    ShyValue *out_value,
+    ShyError **out_error
+);
+
+ShyStatus shy_evaluate_parsed_no_vars(
+    const ShyParsedExpression *expression,
+    ShyValue *out_value
+);
+
+/*
+ * Extended parsed no-variable evaluation.
+ *
+ * If out_error is not NULL, *out_error is set to NULL on success. On failure,
+ * *out_error receives an owned ShyError that must be released with
+ * shy_error_free. Passing out_error as NULL is allowed and disables error
+ * object allocation.
+ */
+ShyStatus shy_evaluate_parsed_no_vars_ex(
+    const ShyParsedExpression *expression,
+    ShyValue *out_value,
+    ShyError **out_error
+);
+
+ShyStatus shy_evaluate_parsed_with_callback(
+    const ShyParsedExpression *expression,
+    ShyVariableResolver resolver,
+    void *user_data,
+    ShyValue *out_value
+);
+
+/*
+ * Extended parsed callback-backed evaluation.
+ *
+ * If out_error is not NULL, *out_error is set to NULL on success. On failure,
+ * *out_error receives an owned ShyError that must be released with
+ * shy_error_free. Passing out_error as NULL is allowed and disables error
+ * object allocation.
+ */
+ShyStatus shy_evaluate_parsed_with_callback_ex(
+    const ShyParsedExpression *expression,
     ShyVariableResolver resolver,
     void *user_data,
     ShyValue *out_value,
