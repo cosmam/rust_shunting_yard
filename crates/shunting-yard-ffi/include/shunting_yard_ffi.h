@@ -25,12 +25,63 @@ enum {
     SHY_VALUE_FLOAT = 2,
 };
 
+enum {
+    SHY_ERROR_STAGE_NONE = 0,
+    SHY_ERROR_STAGE_INPUT = 1,
+    SHY_ERROR_STAGE_LEXICAL = 2,
+    SHY_ERROR_STAGE_PARSE = 3,
+    SHY_ERROR_STAGE_RESOURCE_LIMIT = 4,
+    SHY_ERROR_STAGE_EVALUATION = 5,
+    SHY_ERROR_STAGE_RESOLVER = 6,
+    SHY_ERROR_STAGE_PANIC = 7,
+    SHY_ERROR_STAGE_INVALID_VALUE = 8,
+};
+
+enum {
+    SHY_ERROR_CODE_NONE = 0,
+    SHY_ERROR_CODE_NULL_POINTER = 1,
+    SHY_ERROR_CODE_INVALID_UTF8 = 2,
+    SHY_ERROR_CODE_PANIC = 3,
+
+    SHY_ERROR_CODE_LEXICAL_ERROR = 100,
+
+    SHY_ERROR_CODE_PARSE_ERROR = 200,
+    SHY_ERROR_CODE_PARSE_RECOVERY = 201,
+
+    SHY_ERROR_CODE_RESOURCE_LIMIT = 300,
+    SHY_ERROR_CODE_INPUT_TOO_LARGE = 301,
+    SHY_ERROR_CODE_TOO_MANY_TOKENS = 302,
+    SHY_ERROR_CODE_AST_TOO_LARGE = 303,
+    SHY_ERROR_CODE_EXPRESSION_TOO_DEEP = 304,
+    SHY_ERROR_CODE_TOO_MANY_FUNCTION_ARGUMENTS = 305,
+    SHY_ERROR_CODE_TOO_MANY_PARSER_RECOVERIES = 306,
+
+    SHY_ERROR_CODE_EVAL_ERROR = 400,
+    SHY_ERROR_CODE_INVALID_ARITY = 401,
+    SHY_ERROR_CODE_INVALID_TYPE = 402,
+    SHY_ERROR_CODE_DIVISION_BY_ZERO = 403,
+    SHY_ERROR_CODE_INTEGER_OVERFLOW = 404,
+    SHY_ERROR_CODE_INVALID_SHIFT_COUNT = 405,
+    SHY_ERROR_CODE_INVALID_EXPONENT = 406,
+    SHY_ERROR_CODE_INVALID_PRECISION = 407,
+    SHY_ERROR_CODE_NON_FINITE_FLOAT = 408,
+    SHY_ERROR_CODE_SUBNORMAL_FLOAT = 409,
+    SHY_ERROR_CODE_UNEXPECTED_OPCODE = 410,
+    SHY_ERROR_CODE_UNKNOWN_VARIABLE = 411,
+    SHY_ERROR_CODE_INVALID_EXPRESSION = 412,
+
+    SHY_ERROR_CODE_RESOLVER_ERROR = 500,
+    SHY_ERROR_CODE_INVALID_VALUE_KIND = 600,
+};
+
 typedef struct ShyValue {
     int32_t kind;
     uint8_t bool_value;
     int64_t integer_value;
     double float_value;
 } ShyValue;
+
+typedef struct ShyError ShyError;
 
 /*
  * Callback used to resolve variable names.
@@ -64,12 +115,63 @@ ShyStatus shy_evaluate_no_vars(
     ShyValue *out_value
 );
 
+/*
+ * Extended no-variable evaluation.
+ *
+ * If out_error is not NULL, *out_error is set to NULL on success. On failure,
+ * *out_error receives an owned ShyError that must be released with
+ * shy_error_free. Passing out_error as NULL is allowed and disables error
+ * object allocation.
+ */
+ShyStatus shy_evaluate_no_vars_ex(
+    const char *expression,
+    ShyValue *out_value,
+    ShyError **out_error
+);
+
 ShyStatus shy_evaluate_with_callback(
     const char *expression,
     ShyVariableResolver resolver,
     void *user_data,
     ShyValue *out_value
 );
+
+/*
+ * Extended callback-backed evaluation.
+ *
+ * If out_error is not NULL, *out_error is set to NULL on success. On failure,
+ * *out_error receives an owned ShyError that must be released with
+ * shy_error_free. Passing out_error as NULL is allowed and disables error
+ * object allocation.
+ */
+ShyStatus shy_evaluate_with_callback_ex(
+    const char *expression,
+    ShyVariableResolver resolver,
+    void *user_data,
+    ShyValue *out_value,
+    ShyError **out_error
+);
+
+/*
+ * Free an error object returned through an extended entrypoint's out_error.
+ * Passing NULL is allowed. Do not free ShyError with free() or any other
+ * allocator.
+ */
+void shy_error_free(ShyError *error);
+
+/*
+ * Error accessors. shy_error_message returns a borrowed pointer that remains
+ * valid only until shy_error_free(error). Passing NULL to an accessor returns
+ * the documented null/default value for that accessor.
+ */
+ShyStatus shy_error_status(const ShyError *error);
+int32_t shy_error_stage(const ShyError *error);
+int32_t shy_error_code(const ShyError *error);
+const char *shy_error_message(const ShyError *error);
+int32_t shy_error_has_span(const ShyError *error);
+int32_t shy_error_span_start(const ShyError *error);
+int32_t shy_error_span_end(const ShyError *error);
+int32_t shy_error_diagnostic_count(const ShyError *error);
 
 #ifdef __cplusplus
 }

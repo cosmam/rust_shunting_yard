@@ -122,6 +122,13 @@ target.
 - callback resolver tests must cover null callback pointers, callback-provided
   bool/integer/float values, `user_data`, repeated lookup, callback failure,
   invalid value kinds, and invalid callback-provided floats.
+- extended FFI entrypoints must support `out_error = NULL`;
+- returned `ShyError` objects must be freed with `shy_error_free`;
+- C smoke tests must cover error object allocation, accessors, and free;
+- Rust-side FFI tests must cover null error accessor behavior;
+- pointers returned by `shy_error_message` are valid only until
+  `shy_error_free`;
+- C callers must not free Rust-owned FFI error memory directly.
 
 ## Current Policy Notes
 

@@ -9,8 +9,8 @@ Whitespace has no effect.
 ## Workspace Layout
 
 - `crates/shunting-yard`: safe Rust expression parser/evaluator.
-- `crates/shunting-yard-ffi`: C ABI adapter exposing no-variable evaluation
-  and callback-backed variable resolution.
+- `crates/shunting-yard-ffi`: C ABI adapter exposing no-variable evaluation,
+  callback-backed variable resolution, and optional owned error objects.
 - `c-tests`: external C smoke test for the FFI library.
 
 ## Evaluation API
@@ -165,6 +165,24 @@ parser recovery information separately from unrecovered parse failures.
 
 All evaluation paths reject variable values and operation results that would
 produce NaN, infinity, or subnormal floating-point values.
+
+## FFI API
+
+The FFI crate exposes simple status-only entrypoints:
+
+- `shy_evaluate_no_vars`
+- `shy_evaluate_with_callback`
+
+It also exposes extended `_ex` entrypoints that can return an owned `ShyError`
+through `ShyError **out_error`:
+
+- `shy_evaluate_no_vars_ex`
+- `shy_evaluate_with_callback_ex`
+
+Passing `out_error = NULL` is allowed and disables error object allocation. If
+an error object is returned, the C caller owns it and must release it with
+`shy_error_free`. Pointers returned by `shy_error_message` are borrowed from
+the error object and remain valid only until `shy_error_free`.
 
 ## Verification
 

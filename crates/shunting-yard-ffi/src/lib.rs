@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::ptr;
 
 /// Status code returned by FFI functions.
 pub type ShyStatus = i32;
@@ -31,6 +32,84 @@ pub const SHY_VALUE_INTEGER: i32 = 1;
 /// Floating-point value kind at the C ABI boundary.
 pub const SHY_VALUE_FLOAT: i32 = 2;
 
+/// No error stage is available.
+pub const SHY_ERROR_STAGE_NONE: i32 = 0;
+/// Failure happened while validating FFI input.
+pub const SHY_ERROR_STAGE_INPUT: i32 = 1;
+/// Failure happened during lexical analysis.
+pub const SHY_ERROR_STAGE_LEXICAL: i32 = 2;
+/// Failure happened during parsing.
+pub const SHY_ERROR_STAGE_PARSE: i32 = 3;
+/// A configured resource limit was exceeded.
+pub const SHY_ERROR_STAGE_RESOURCE_LIMIT: i32 = 4;
+/// Failure happened during evaluation.
+pub const SHY_ERROR_STAGE_EVALUATION: i32 = 5;
+/// Failure came from a variable resolver callback.
+pub const SHY_ERROR_STAGE_RESOLVER: i32 = 6;
+/// A Rust panic was caught at the FFI boundary.
+pub const SHY_ERROR_STAGE_PANIC: i32 = 7;
+/// A callback returned an invalid FFI value.
+pub const SHY_ERROR_STAGE_INVALID_VALUE: i32 = 8;
+
+/// No error code is available.
+pub const SHY_ERROR_CODE_NONE: i32 = 0;
+/// A required pointer argument was null.
+pub const SHY_ERROR_CODE_NULL_POINTER: i32 = 1;
+/// The input C string was not valid UTF-8.
+pub const SHY_ERROR_CODE_INVALID_UTF8: i32 = 2;
+/// A Rust panic was caught at the FFI boundary.
+pub const SHY_ERROR_CODE_PANIC: i32 = 3;
+/// The lexer rejected the source text.
+pub const SHY_ERROR_CODE_LEXICAL_ERROR: i32 = 100;
+/// The parser rejected the source text.
+pub const SHY_ERROR_CODE_PARSE_ERROR: i32 = 200;
+/// The parser recovered from malformed source text.
+pub const SHY_ERROR_CODE_PARSE_RECOVERY: i32 = 201;
+/// A resource limit was exceeded.
+pub const SHY_ERROR_CODE_RESOURCE_LIMIT: i32 = 300;
+/// Input exceeded the maximum byte length.
+pub const SHY_ERROR_CODE_INPUT_TOO_LARGE: i32 = 301;
+/// Token count exceeded the configured maximum.
+pub const SHY_ERROR_CODE_TOO_MANY_TOKENS: i32 = 302;
+/// AST node count exceeded the configured maximum.
+pub const SHY_ERROR_CODE_AST_TOO_LARGE: i32 = 303;
+/// AST nesting depth exceeded the configured maximum.
+pub const SHY_ERROR_CODE_EXPRESSION_TOO_DEEP: i32 = 304;
+/// A function call had too many arguments.
+pub const SHY_ERROR_CODE_TOO_MANY_FUNCTION_ARGUMENTS: i32 = 305;
+/// Parser recovery count exceeded the configured maximum.
+pub const SHY_ERROR_CODE_TOO_MANY_PARSER_RECOVERIES: i32 = 306;
+/// Evaluation failed without a more specific stable code.
+pub const SHY_ERROR_CODE_EVAL_ERROR: i32 = 400;
+/// An operator or function had an invalid operand count.
+pub const SHY_ERROR_CODE_INVALID_ARITY: i32 = 401;
+/// An operator or function received an invalid value type.
+pub const SHY_ERROR_CODE_INVALID_TYPE: i32 = 402;
+/// Division, modulo, or remainder by zero.
+pub const SHY_ERROR_CODE_DIVISION_BY_ZERO: i32 = 403;
+/// Checked integer arithmetic overflowed.
+pub const SHY_ERROR_CODE_INTEGER_OVERFLOW: i32 = 404;
+/// A shift count was negative or too large.
+pub const SHY_ERROR_CODE_INVALID_SHIFT_COUNT: i32 = 405;
+/// An exponent was invalid.
+pub const SHY_ERROR_CODE_INVALID_EXPONENT: i32 = 406;
+/// A rounding precision was invalid.
+pub const SHY_ERROR_CODE_INVALID_PRECISION: i32 = 407;
+/// A floating-point result was NaN or infinite.
+pub const SHY_ERROR_CODE_NON_FINITE_FLOAT: i32 = 408;
+/// A floating-point result was subnormal.
+pub const SHY_ERROR_CODE_SUBNORMAL_FLOAT: i32 = 409;
+/// Evaluation encountered an unexpected opcode.
+pub const SHY_ERROR_CODE_UNEXPECTED_OPCODE: i32 = 410;
+/// A variable name could not be resolved.
+pub const SHY_ERROR_CODE_UNKNOWN_VARIABLE: i32 = 411;
+/// The expression tree was invalid.
+pub const SHY_ERROR_CODE_INVALID_EXPRESSION: i32 = 412;
+/// A variable resolver callback failed.
+pub const SHY_ERROR_CODE_RESOLVER_ERROR: i32 = 500;
+/// A callback returned an unknown ShyValue kind.
+pub const SHY_ERROR_CODE_INVALID_VALUE_KIND: i32 = 600;
+
 /// Runtime value kind returned through the C ABI.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +134,21 @@ pub struct ShyValue {
     pub integer_value: i64,
     /// Floating-point payload.
     pub float_value: f64,
+}
+
+/// Opaque error object returned by extended FFI entrypoints.
+///
+/// C callers must release pointers to this type with [`shy_error_free`].
+#[repr(C)]
+pub struct ShyError {
+    status: ShyStatus,
+    stage: i32,
+    code: i32,
+    message: CString,
+    has_span: i32,
+    span_start: i32,
+    span_end: i32,
+    diagnostic_count: i32,
 }
 
 /// C callback used to resolve variable names during evaluation.
@@ -90,6 +184,318 @@ fn status_from_code(code: ShyStatus) -> ShyStatus {
     }
 }
 
+fn cstring_lossy_no_nul(message: impl Into<String>) -> CString {
+    let sanitized = message.into().replace('\0', "\\0");
+
+    match CString::new(sanitized) {
+        Ok(message) => message,
+        Err(_) => match CString::new("error") {
+            Ok(message) => message,
+            Err(_) => {
+                // SAFETY: the byte string is static ASCII with no interior NUL.
+                unsafe { CString::from_vec_unchecked(b"error".to_vec()) }
+            }
+        },
+    }
+}
+
+fn usize_to_i32_saturating(value: usize) -> i32 {
+    i32::try_from(value).unwrap_or(i32::MAX)
+}
+
+struct ErrorParts {
+    status: ShyStatus,
+    stage: i32,
+    code: i32,
+    message: String,
+    span: Option<(usize, usize)>,
+    diagnostic_count: usize,
+}
+
+impl ErrorParts {
+    fn into_ffi_error(self) -> ShyError {
+        let (has_span, span_start, span_end) = match self.span {
+            Some((start, end)) => (
+                1,
+                usize_to_i32_saturating(start),
+                usize_to_i32_saturating(end),
+            ),
+            None => (0, -1, -1),
+        };
+
+        ShyError {
+            status: self.status,
+            stage: self.stage,
+            code: self.code,
+            message: cstring_lossy_no_nul(self.message),
+            has_span,
+            span_start,
+            span_end,
+            diagnostic_count: usize_to_i32_saturating(self.diagnostic_count),
+        }
+    }
+}
+
+struct FfiFailure {
+    status: ShyStatus,
+    error: ShyError,
+}
+
+fn allocate_error(error: ShyError) -> *mut ShyError {
+    Box::into_raw(Box::new(error))
+}
+
+fn clear_optional_error(out_error: *mut *mut ShyError) {
+    if out_error.is_null() {
+        return;
+    }
+
+    // SAFETY:
+    // - caller must provide writable storage for one ShyError pointer.
+    // - out_error was checked for null above.
+    unsafe { out_error.write(ptr::null_mut()) };
+}
+
+fn write_optional_error(out_error: *mut *mut ShyError, error: ShyError) {
+    if out_error.is_null() {
+        return;
+    }
+
+    let error = allocate_error(error);
+
+    // SAFETY:
+    // - caller must provide writable storage for one ShyError pointer.
+    // - out_error was checked for null above.
+    unsafe { out_error.write(error) };
+}
+
+fn input_error_parts(status: ShyStatus, code: i32, message: &'static str) -> ErrorParts {
+    ErrorParts {
+        status,
+        stage: SHY_ERROR_STAGE_INPUT,
+        code,
+        message: message.to_owned(),
+        span: None,
+        diagnostic_count: 0,
+    }
+}
+
+fn null_pointer_error() -> ShyError {
+    input_error_parts(
+        SHY_STATUS_NULL_POINTER,
+        SHY_ERROR_CODE_NULL_POINTER,
+        "required pointer argument was null",
+    )
+    .into_ffi_error()
+}
+
+fn invalid_utf8_error() -> ShyError {
+    input_error_parts(
+        SHY_STATUS_INVALID_UTF8,
+        SHY_ERROR_CODE_INVALID_UTF8,
+        "expression was not valid UTF-8",
+    )
+    .into_ffi_error()
+}
+
+fn panic_error() -> ShyError {
+    ErrorParts {
+        status: SHY_STATUS_PANIC,
+        stage: SHY_ERROR_STAGE_PANIC,
+        code: SHY_ERROR_CODE_PANIC,
+        message: "Rust panic caught at FFI boundary".to_owned(),
+        span: None,
+        diagnostic_count: 0,
+    }
+    .into_ffi_error()
+}
+
+fn resolver_error_parts(status: ShyStatus) -> ErrorParts {
+    ErrorParts {
+        status,
+        stage: SHY_ERROR_STAGE_RESOLVER,
+        code: SHY_ERROR_CODE_RESOLVER_ERROR,
+        message: "variable resolver callback failed".to_owned(),
+        span: None,
+        diagnostic_count: 0,
+    }
+}
+
+fn invalid_value_error_parts() -> ErrorParts {
+    ErrorParts {
+        status: SHY_STATUS_INVALID_VALUE,
+        stage: SHY_ERROR_STAGE_INVALID_VALUE,
+        code: SHY_ERROR_CODE_INVALID_VALUE_KIND,
+        message: "callback returned unknown ShyValue kind".to_owned(),
+        span: None,
+        diagnostic_count: 0,
+    }
+}
+
+fn resource_limit_error_parts(error: shunting_yard::ResourceLimitError) -> ErrorParts {
+    let code = match error {
+        shunting_yard::ResourceLimitError::InputTooLarge { .. } => SHY_ERROR_CODE_INPUT_TOO_LARGE,
+        shunting_yard::ResourceLimitError::TooManyTokens { .. } => SHY_ERROR_CODE_TOO_MANY_TOKENS,
+        shunting_yard::ResourceLimitError::AstTooLarge { .. } => SHY_ERROR_CODE_AST_TOO_LARGE,
+        shunting_yard::ResourceLimitError::ExpressionTooDeep { .. } => {
+            SHY_ERROR_CODE_EXPRESSION_TOO_DEEP
+        }
+        shunting_yard::ResourceLimitError::TooManyFunctionArguments { .. } => {
+            SHY_ERROR_CODE_TOO_MANY_FUNCTION_ARGUMENTS
+        }
+        shunting_yard::ResourceLimitError::TooManyParserRecoveries { .. } => {
+            SHY_ERROR_CODE_TOO_MANY_PARSER_RECOVERIES
+        }
+    };
+
+    ErrorParts {
+        status: SHY_STATUS_EVALUATION_ERROR,
+        stage: SHY_ERROR_STAGE_RESOURCE_LIMIT,
+        code,
+        message: error.to_string(),
+        span: None,
+        diagnostic_count: 1,
+    }
+}
+
+fn lexical_error_parts(
+    span: Option<shunting_yard::SourceSpan>,
+    error: shunting_yard::LexicalError,
+) -> ErrorParts {
+    ErrorParts {
+        status: SHY_STATUS_EVALUATION_ERROR,
+        stage: SHY_ERROR_STAGE_LEXICAL,
+        code: SHY_ERROR_CODE_LEXICAL_ERROR,
+        message: format!("lexical error: {error}"),
+        span: span.map(|span| (span.start, span.end)),
+        diagnostic_count: 1,
+    }
+}
+
+fn parse_error_parts(diagnostics: shunting_yard::ParseDiagnostics) -> ErrorParts {
+    let diagnostic_count = diagnostics.len();
+    let recovery_count = diagnostics.recovery_count();
+    let first_span = diagnostics
+        .diagnostics
+        .iter()
+        .find_map(|diagnostic| diagnostic.span.map(|span| (span.start, span.end)));
+
+    let code = if recovery_count > 0 {
+        SHY_ERROR_CODE_PARSE_RECOVERY
+    } else {
+        SHY_ERROR_CODE_PARSE_ERROR
+    };
+
+    ErrorParts {
+        status: SHY_STATUS_EVALUATION_ERROR,
+        stage: SHY_ERROR_STAGE_PARSE,
+        code,
+        message: format!("parse failed with {diagnostic_count} diagnostic(s)"),
+        span: first_span,
+        diagnostic_count,
+    }
+}
+
+fn eval_error_parts(error: shunting_yard::EvalError) -> ErrorParts {
+    match error {
+        shunting_yard::EvalError::ResourceLimit(error) => resource_limit_error_parts(error),
+        shunting_yard::EvalError::LexicalError(error) => lexical_error_parts(None, error),
+        shunting_yard::EvalError::ParserError => ErrorParts {
+            status: SHY_STATUS_EVALUATION_ERROR,
+            stage: SHY_ERROR_STAGE_PARSE,
+            code: SHY_ERROR_CODE_PARSE_ERROR,
+            message: "parser error".to_owned(),
+            span: None,
+            diagnostic_count: 1,
+        },
+        shunting_yard::EvalError::ParserRecovery { count } => ErrorParts {
+            status: SHY_STATUS_EVALUATION_ERROR,
+            stage: SHY_ERROR_STAGE_PARSE,
+            code: SHY_ERROR_CODE_PARSE_RECOVERY,
+            message: format!("parser recovered from {count} error(s)"),
+            span: None,
+            diagnostic_count: count,
+        },
+        error @ shunting_yard::EvalError::InvalidArity { .. } => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_INVALID_ARITY)
+        }
+        error @ shunting_yard::EvalError::InvalidExpression => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_INVALID_EXPRESSION)
+        }
+        error @ shunting_yard::EvalError::InvalidType { .. } => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_INVALID_TYPE)
+        }
+        error @ shunting_yard::EvalError::DivisionByZero => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_DIVISION_BY_ZERO)
+        }
+        error @ shunting_yard::EvalError::IntegerOverflow { .. } => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_INTEGER_OVERFLOW)
+        }
+        error @ shunting_yard::EvalError::InvalidShiftCount { .. } => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_INVALID_SHIFT_COUNT)
+        }
+        error @ shunting_yard::EvalError::InvalidExponent { .. } => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_INVALID_EXPONENT)
+        }
+        error @ shunting_yard::EvalError::InvalidPrecision => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_INVALID_PRECISION)
+        }
+        error @ shunting_yard::EvalError::NonFiniteFloat => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_NON_FINITE_FLOAT)
+        }
+        error @ shunting_yard::EvalError::SubnormalFloat => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_SUBNORMAL_FLOAT)
+        }
+        error @ shunting_yard::EvalError::UnexpectedOpcode => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_UNEXPECTED_OPCODE)
+        }
+        error @ shunting_yard::EvalError::UnknownVariable(_) => {
+            eval_error_code_parts(error, SHY_ERROR_CODE_UNKNOWN_VARIABLE)
+        }
+    }
+}
+
+fn eval_error_code_parts(error: shunting_yard::EvalError, code: i32) -> ErrorParts {
+    ErrorParts {
+        status: SHY_STATUS_EVALUATION_ERROR,
+        stage: SHY_ERROR_STAGE_EVALUATION,
+        code,
+        message: error.to_string(),
+        span: None,
+        diagnostic_count: 1,
+    }
+}
+
+fn error_parts_from_core_error(error: shunting_yard::Error) -> ErrorParts {
+    match error {
+        shunting_yard::Error::ResourceLimit(error) => resource_limit_error_parts(error),
+        shunting_yard::Error::Lexical { span, error } => lexical_error_parts(Some(span), error),
+        shunting_yard::Error::Parse(diagnostics) => parse_error_parts(diagnostics),
+        shunting_yard::Error::Eval(error) => eval_error_parts(error),
+    }
+}
+
+fn failure_from_parts(parts: ErrorParts) -> FfiFailure {
+    let status = parts.status;
+    FfiFailure {
+        status,
+        error: parts.into_ffi_error(),
+    }
+}
+
+fn ffi_boundary_with_error<F>(out_error: *mut *mut ShyError, f: F) -> ShyStatus
+where
+    F: FnOnce() -> ShyStatus,
+{
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(status) => status,
+        Err(_) => {
+            write_optional_error(out_error, panic_error());
+            SHY_STATUS_PANIC
+        }
+    }
+}
+
 impl ShyValue {
     fn from_value(value: shunting_yard::Value) -> Self {
         match value {
@@ -115,10 +521,174 @@ impl ShyValue {
     }
 }
 
+/// Free an error object returned by an extended FFI entrypoint.
+///
+/// # Safety
+///
+/// `error` must be null or a pointer returned by this crate through an
+/// `out_error` parameter. It must not have been freed already.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_free(error: *mut ShyError) {
+    if error.is_null() {
+        return;
+    }
+
+    // SAFETY:
+    // - error must have been returned by this crate through an out_error parameter.
+    // - Box::from_raw takes ownership and drops the allocation exactly once.
+    unsafe { drop(Box::from_raw(error)) };
+}
+
+/// Return the status associated with an error object.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_status(error: *const ShyError) -> ShyStatus {
+    if error.is_null() {
+        return SHY_STATUS_NULL_POINTER;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).status }
+}
+
+/// Return the stage associated with an error object.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_stage(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return SHY_ERROR_STAGE_NONE;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).stage }
+}
+
+/// Return the stable code associated with an error object.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_code(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return SHY_ERROR_CODE_NULL_POINTER;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).code }
+}
+
+/// Return a borrowed human-readable error message.
+///
+/// The returned pointer remains valid until `shy_error_free(error)`.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_message(error: *const ShyError) -> *const c_char {
+    if error.is_null() {
+        return ptr::null();
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).message.as_ptr() }
+}
+
+/// Return nonzero when an error object contains a source span.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_has_span(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return 0;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).has_span }
+}
+
+/// Return the inclusive start byte offset for an error source span.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_span_start(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return -1;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).span_start }
+}
+
+/// Return the exclusive end byte offset for an error source span.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_span_end(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return -1;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).span_end }
+}
+
+/// Return the number of diagnostics represented by an error object.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_diagnostic_count(error: *const ShyError) -> i32 {
+    if error.is_null() {
+        return 0;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    unsafe { (*error).diagnostic_count }
+}
+
 struct FfiResolver {
     callback: ShyVariableResolverCallback,
     user_data: *mut c_void,
-    last_status: Option<ShyStatus>,
+    last_error_parts: Option<ErrorParts>,
 }
 
 impl FfiResolver {
@@ -145,12 +715,15 @@ impl FfiResolver {
 
         let status = status_from_code(status);
         if status != SHY_STATUS_OK {
-            self.last_status = Some(status);
+            self.last_error_parts = Some(resolver_error_parts(status));
             return Err(shunting_yard::EvalError::UnknownVariable(name.to_owned()));
         }
 
         shunting_yard::Value::try_from(out_value).map_err(|status| {
-            self.last_status = Some(status);
+            self.last_error_parts = Some(match status {
+                SHY_STATUS_INVALID_VALUE => invalid_value_error_parts(),
+                status => resolver_error_parts(status),
+            });
             shunting_yard::EvalError::InvalidExpression
         })
     }
@@ -175,39 +748,89 @@ impl TryFrom<ShyValue> for shunting_yard::Value {
     }
 }
 
-fn evaluate_no_vars_impl(expression: &str) -> Result<ShyValue, ShyStatus> {
+fn evaluate_no_vars_ex_impl(expression: &str) -> Result<ShyValue, FfiFailure> {
     let variables = HashMap::new();
 
-    shunting_yard::evaluate_detailed(expression, &variables)
-        .map(ShyValue::from_value)
-        .map_err(|_error| SHY_STATUS_EVALUATION_ERROR)
+    match shunting_yard::evaluate_detailed(expression, &variables) {
+        Ok(value) => Ok(ShyValue::from_value(value)),
+        Err(error) => Err(failure_from_parts(error_parts_from_core_error(error))),
+    }
 }
 
-fn evaluate_with_callback_impl(
+fn evaluate_with_callback_ex_impl(
     expression: &str,
     callback: ShyVariableResolverCallback,
     user_data: *mut c_void,
-) -> Result<ShyValue, ShyStatus> {
+) -> Result<ShyValue, FfiFailure> {
     let mut resolver = FfiResolver {
         callback,
         user_data,
-        last_status: None,
+        last_error_parts: None,
     };
 
     match shunting_yard::evaluate_with_resolver_detailed(expression, &mut resolver) {
         Ok(value) => Ok(ShyValue::from_value(value)),
-        Err(_error) => Err(resolver.last_status.unwrap_or(SHY_STATUS_EVALUATION_ERROR)),
+        Err(error) => {
+            let parts = match resolver.last_error_parts {
+                Some(parts) => parts,
+                None => error_parts_from_core_error(error),
+            };
+            Err(failure_from_parts(parts))
+        }
     }
 }
 
-fn ffi_boundary<F>(f: F) -> ShyStatus
-where
-    F: FnOnce() -> ShyStatus,
-{
-    match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(status) => status,
-        Err(_) => SHY_STATUS_PANIC,
-    }
+/// Evaluate an expression that does not require variable lookup.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `out_value` must be null or point to valid,
+/// writable storage for one [`ShyValue`]. `out_error` must be null or point to
+/// valid, writable storage for one `ShyError *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_no_vars_ex(
+    expression: *const c_char,
+    out_value: *mut ShyValue,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    ffi_boundary_with_error(out_error, || {
+        clear_optional_error(out_error);
+
+        if expression.is_null() || out_value.is_null() {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        }
+
+        // SAFETY:
+        // - expression was checked for null above.
+        // - caller must provide a valid NUL-terminated C string.
+        // - CStr does not take ownership of the pointer.
+        let expression = unsafe { CStr::from_ptr(expression) };
+
+        let expression = match expression.to_str() {
+            Ok(expression) => expression,
+            Err(_) => {
+                write_optional_error(out_error, invalid_utf8_error());
+                return SHY_STATUS_INVALID_UTF8;
+            }
+        };
+
+        match evaluate_no_vars_ex_impl(expression) {
+            Ok(value) => {
+                // SAFETY:
+                // - out_value was checked for null above.
+                // - caller must provide valid writable storage for ShyValue.
+                unsafe { out_value.write(value) };
+                SHY_STATUS_OK
+            }
+            Err(failure) => {
+                let status = failure.status;
+                write_optional_error(out_error, failure.error);
+                status
+            }
+        }
+    })
 }
 
 /// Evaluate an expression that does not require variable lookup.
@@ -222,10 +845,43 @@ pub unsafe extern "C" fn shy_evaluate_no_vars(
     expression: *const c_char,
     out_value: *mut ShyValue,
 ) -> ShyStatus {
-    ffi_boundary(|| {
+    // SAFETY:
+    // - forwards the caller-provided pointers to the extended entrypoint.
+    // - passes a null out_error pointer to preserve the status-only ABI.
+    unsafe { shy_evaluate_no_vars_ex(expression, out_value, ptr::null_mut()) }
+}
+
+/// Evaluate an expression using a C callback for variable lookup.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `resolver` must be null or a valid function
+/// pointer that follows the [`ShyVariableResolver`] contract. `user_data` is
+/// caller-owned and is passed through without being dereferenced. `out_value`
+/// must be null or point to valid, writable storage for one [`ShyValue`].
+/// `out_error` must be null or point to valid, writable storage for one
+/// `ShyError *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_with_callback_ex(
+    expression: *const c_char,
+    resolver: ShyVariableResolver,
+    user_data: *mut c_void,
+    out_value: *mut ShyValue,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    ffi_boundary_with_error(out_error, || {
+        clear_optional_error(out_error);
+
         if expression.is_null() || out_value.is_null() {
+            write_optional_error(out_error, null_pointer_error());
             return SHY_STATUS_NULL_POINTER;
         }
+
+        let Some(resolver) = resolver else {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        };
 
         // SAFETY:
         // - expression was checked for null above.
@@ -235,10 +891,13 @@ pub unsafe extern "C" fn shy_evaluate_no_vars(
 
         let expression = match expression.to_str() {
             Ok(expression) => expression,
-            Err(_) => return SHY_STATUS_INVALID_UTF8,
+            Err(_) => {
+                write_optional_error(out_error, invalid_utf8_error());
+                return SHY_STATUS_INVALID_UTF8;
+            }
         };
 
-        match evaluate_no_vars_impl(expression) {
+        match evaluate_with_callback_ex_impl(expression, resolver, user_data) {
             Ok(value) => {
                 // SAFETY:
                 // - out_value was checked for null above.
@@ -246,7 +905,11 @@ pub unsafe extern "C" fn shy_evaluate_no_vars(
                 unsafe { out_value.write(value) };
                 SHY_STATUS_OK
             }
-            Err(status) => status,
+            Err(failure) => {
+                let status = failure.status;
+                write_optional_error(out_error, failure.error);
+                status
+            }
         }
     })
 }
@@ -267,37 +930,12 @@ pub unsafe extern "C" fn shy_evaluate_with_callback(
     user_data: *mut c_void,
     out_value: *mut ShyValue,
 ) -> ShyStatus {
-    ffi_boundary(|| {
-        if expression.is_null() || out_value.is_null() {
-            return SHY_STATUS_NULL_POINTER;
-        }
-
-        let Some(resolver) = resolver else {
-            return SHY_STATUS_NULL_POINTER;
-        };
-
-        // SAFETY:
-        // - expression was checked for null above.
-        // - caller must provide a valid NUL-terminated C string.
-        // - CStr does not take ownership of the pointer.
-        let expression = unsafe { CStr::from_ptr(expression) };
-
-        let expression = match expression.to_str() {
-            Ok(expression) => expression,
-            Err(_) => return SHY_STATUS_INVALID_UTF8,
-        };
-
-        match evaluate_with_callback_impl(expression, resolver, user_data) {
-            Ok(value) => {
-                // SAFETY:
-                // - out_value was checked for null above.
-                // - caller must provide valid writable storage for ShyValue.
-                unsafe { out_value.write(value) };
-                SHY_STATUS_OK
-            }
-            Err(status) => status,
-        }
-    })
+    // SAFETY:
+    // - forwards the caller-provided pointers to the extended entrypoint.
+    // - passes a null out_error pointer to preserve the status-only ABI.
+    unsafe {
+        shy_evaluate_with_callback_ex(expression, resolver, user_data, out_value, ptr::null_mut())
+    }
 }
 
 #[cfg(test)]
@@ -305,8 +943,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ffi_boundary_converts_panic_to_status() {
-        let status = ffi_boundary(|| panic!("intentional test panic"));
+    fn ffi_boundary_with_error_converts_panic_to_status() {
+        let status = ffi_boundary_with_error(ptr::null_mut(), || panic!("intentional test panic"));
 
         assert_eq!(status, SHY_STATUS_PANIC);
     }
