@@ -16,6 +16,13 @@ The core crate remains unsafe-free.
 - `shy_evaluate_no_vars_ex`
 - `shy_evaluate_with_callback`
 - `shy_evaluate_with_callback_ex`
+- `shy_parse_expression`
+- `shy_parse_expression_ex`
+- `shy_parsed_expression_free`
+- `shy_evaluate_parsed_no_vars`
+- `shy_evaluate_parsed_no_vars_ex`
+- `shy_evaluate_parsed_with_callback`
+- `shy_evaluate_parsed_with_callback_ex`
 - `shy_error_free`
 - `shy_error_status`
 - `shy_error_stage`
@@ -49,7 +56,6 @@ The core crate remains unsafe-free.
 - Full parse diagnostic iteration is not exposed yet.
 - FFI error messages are human-readable and are not a stable machine-readable
   format.
-- No parse/evaluate object handles yet.
 - C smoke testing is Linux-first.
 
 ## Error Reporting
@@ -66,6 +72,16 @@ The error object exposes stable integer stage and code values through accessors
 rather than exposing Rust enums or core diagnostic structures directly. Source
 spans are available for lexical and parse failures when the core parser reports
 them. Parse errors expose a diagnostic count, but not the full diagnostic list.
+
+## Parsed Expression Handles
+
+`ShyParsedExpression` is an opaque handle owned by C callers after a successful
+parse call. It must be released with `shy_parsed_expression_free`.
+
+Handles are immutable and may be evaluated repeatedly. Variable values are
+resolved at evaluation time, not parse time.
+
+C callers must not use a handle after freeing it.
 
 ## C Smoke Test
 
@@ -95,6 +111,5 @@ the core evaluator and reported through the FFI as evaluation errors.
 
 ## Next Planned FFI Step
 
-Add opaque parsed-expression handles so C callers can parse once, evaluate many
-times, and free the parsed expression explicitly. Full parse-diagnostic
-iteration can follow as a later diagnostic expansion.
+Add full parse-diagnostic iteration through indexed accessors while keeping
+diagnostic storage behind Rust-owned opaque objects.

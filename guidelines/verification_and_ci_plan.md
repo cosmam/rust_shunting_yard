@@ -129,6 +129,15 @@ target.
 - pointers returned by `shy_error_message` are valid only until
   `shy_error_free`;
 - C callers must not free Rust-owned FFI error memory directly.
+- parse functions must reject null input and null output handle pointers;
+- successful FFI parse returns an owned non-null `ShyParsedExpression` handle;
+- failed FFI parse leaves the output handle null when possible;
+- parsed-expression handles must be freed with `shy_parsed_expression_free`;
+- freeing a null parsed-expression handle is allowed;
+- parsed no-variable and parsed callback evaluation must support `_ex` error
+  reporting;
+- repeated evaluation of the same parsed handle must be tested;
+- callback-backed parsed evaluation must resolve variables at evaluation time.
 
 ## Current Policy Notes
 
