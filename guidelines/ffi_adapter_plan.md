@@ -12,12 +12,19 @@ The core crate remains unsafe-free.
 
 ## Current ABI
 
+- `shy_eval_options_default`
 - `shy_evaluate_no_vars`
 - `shy_evaluate_no_vars_ex`
+- `shy_evaluate_no_vars_with_options`
+- `shy_evaluate_no_vars_with_options_ex`
 - `shy_evaluate_with_callback`
 - `shy_evaluate_with_callback_ex`
+- `shy_evaluate_with_callback_with_options`
+- `shy_evaluate_with_callback_with_options_ex`
 - `shy_parse_expression`
 - `shy_parse_expression_ex`
+- `shy_parse_expression_with_options`
+- `shy_parse_expression_with_options_ex`
 - `shy_parsed_expression_free`
 - `shy_evaluate_parsed_no_vars`
 - `shy_evaluate_parsed_no_vars_ex`
@@ -80,6 +87,19 @@ rather than exposing Rust enums or core diagnostic structures directly. Source
 spans are available for lexical and parse failures when the core parser reports
 them.
 
+## EvalOptions
+
+The FFI adapter exposes `ShyEvalOptions`, a C-compatible resource-limit
+configuration struct. Callers initialize it with `shy_eval_options_default`,
+optionally adjust limits, and pass it to `_with_options` entrypoints.
+
+The struct uses fixed-width integer fields rather than Rust `usize`. The
+adapter validates ABI size, nonzero values, and conversion into Rust `usize`
+before calling the core crate.
+
+Invalid options return `SHY_STATUS_INVALID_OPTIONS` and, for `_ex` entrypoints,
+an input-stage `ShyError` with `SHY_ERROR_CODE_INVALID_OPTIONS`.
+
 ## Parse Diagnostic Iteration
 
 Parse-stage `ShyError` objects retain owned diagnostic records. C callers can
@@ -130,5 +150,5 @@ the core evaluator and reported through the FFI as evaluation errors.
 
 ## Next Planned FFI Step
 
-Expand parse-diagnostic access only if C callers need more of the nested
-recovery structure or stable token classification.
+Add C packaging guidance and smoke coverage for CMake, pkg-config, and static
+library consumers.

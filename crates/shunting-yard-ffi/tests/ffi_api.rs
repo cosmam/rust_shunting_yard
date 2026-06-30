@@ -4,23 +4,28 @@ use std::ptr;
 use shunting_yard_ffi::{
     SHY_DIAGNOSTIC_KIND_NONE, SHY_DIAGNOSTIC_KIND_RECOVERY, SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_EOF,
     SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_TOKEN, SHY_ERROR_CODE_DIVISION_BY_ZERO,
-    SHY_ERROR_CODE_INPUT_TOO_LARGE, SHY_ERROR_CODE_INVALID_UTF8, SHY_ERROR_CODE_INVALID_VALUE_KIND,
-    SHY_ERROR_CODE_LEXICAL_ERROR, SHY_ERROR_CODE_NON_FINITE_FLOAT, SHY_ERROR_CODE_NULL_POINTER,
-    SHY_ERROR_CODE_PARSE_RECOVERY, SHY_ERROR_CODE_RESOLVER_ERROR, SHY_ERROR_CODE_SUBNORMAL_FLOAT,
+    SHY_ERROR_CODE_INPUT_TOO_LARGE, SHY_ERROR_CODE_INVALID_OPTIONS, SHY_ERROR_CODE_INVALID_UTF8,
+    SHY_ERROR_CODE_INVALID_VALUE_KIND, SHY_ERROR_CODE_LEXICAL_ERROR,
+    SHY_ERROR_CODE_NON_FINITE_FLOAT, SHY_ERROR_CODE_NULL_POINTER, SHY_ERROR_CODE_PARSE_RECOVERY,
+    SHY_ERROR_CODE_RESOLVER_ERROR, SHY_ERROR_CODE_SUBNORMAL_FLOAT, SHY_ERROR_CODE_TOO_MANY_TOKENS,
     SHY_ERROR_STAGE_EVALUATION, SHY_ERROR_STAGE_INPUT, SHY_ERROR_STAGE_INVALID_VALUE,
     SHY_ERROR_STAGE_LEXICAL, SHY_ERROR_STAGE_NONE, SHY_ERROR_STAGE_PARSE, SHY_ERROR_STAGE_RESOLVER,
-    SHY_ERROR_STAGE_RESOURCE_LIMIT, SHY_STATUS_EVALUATION_ERROR, SHY_STATUS_INVALID_UTF8,
-    SHY_STATUS_INVALID_VALUE, SHY_STATUS_NULL_POINTER, SHY_STATUS_OK, SHY_STATUS_RESOLVER_ERROR,
-    SHY_VALUE_BOOL, SHY_VALUE_FLOAT, SHY_VALUE_INTEGER, ShyError, ShyParsedExpression, ShyStatus,
-    ShyValue, ShyValueKind, ShyVariableResolver, shy_error_code, shy_error_diagnostic_count,
-    shy_error_diagnostic_expected_count, shy_error_diagnostic_expected_token,
-    shy_error_diagnostic_has_span, shy_error_diagnostic_kind, shy_error_diagnostic_span_end,
-    shy_error_diagnostic_span_start, shy_error_free, shy_error_has_span, shy_error_message,
-    shy_error_span_end, shy_error_span_start, shy_error_stage, shy_error_status,
-    shy_evaluate_no_vars, shy_evaluate_no_vars_ex, shy_evaluate_parsed_no_vars,
+    SHY_ERROR_STAGE_RESOURCE_LIMIT, SHY_STATUS_EVALUATION_ERROR, SHY_STATUS_INVALID_OPTIONS,
+    SHY_STATUS_INVALID_UTF8, SHY_STATUS_INVALID_VALUE, SHY_STATUS_NULL_POINTER, SHY_STATUS_OK,
+    SHY_STATUS_RESOLVER_ERROR, SHY_VALUE_BOOL, SHY_VALUE_FLOAT, SHY_VALUE_INTEGER, ShyError,
+    ShyEvalOptions, ShyParsedExpression, ShyStatus, ShyValue, ShyValueKind, ShyVariableResolver,
+    shy_error_code, shy_error_diagnostic_count, shy_error_diagnostic_expected_count,
+    shy_error_diagnostic_expected_token, shy_error_diagnostic_has_span, shy_error_diagnostic_kind,
+    shy_error_diagnostic_span_end, shy_error_diagnostic_span_start, shy_error_free,
+    shy_error_has_span, shy_error_message, shy_error_span_end, shy_error_span_start,
+    shy_error_stage, shy_error_status, shy_eval_options_default, shy_evaluate_no_vars,
+    shy_evaluate_no_vars_ex, shy_evaluate_no_vars_with_options,
+    shy_evaluate_no_vars_with_options_ex, shy_evaluate_parsed_no_vars,
     shy_evaluate_parsed_no_vars_ex, shy_evaluate_parsed_with_callback,
     shy_evaluate_parsed_with_callback_ex, shy_evaluate_with_callback,
-    shy_evaluate_with_callback_ex, shy_parse_expression, shy_parse_expression_ex,
+    shy_evaluate_with_callback_ex, shy_evaluate_with_callback_with_options,
+    shy_evaluate_with_callback_with_options_ex, shy_parse_expression, shy_parse_expression_ex,
+    shy_parse_expression_with_options, shy_parse_expression_with_options_ex,
     shy_parsed_expression_free,
 };
 
@@ -40,6 +45,13 @@ fn c_string(text: &str) -> CString {
     }
 }
 
+fn eval_options_default(out_options: *mut ShyEvalOptions) -> ShyStatus {
+    // SAFETY:
+    // - Tests pass null only for the API path that explicitly rejects null.
+    // - Non-null output pointers come from valid mutable ShyEvalOptions storage.
+    unsafe { shy_eval_options_default(out_options) }
+}
+
 fn evaluate(expression: *const std::ffi::c_char, out_value: *mut ShyValue) -> ShyStatus {
     // SAFETY:
     // - Tests pass null pointers only for API paths that explicitly accept and
@@ -48,6 +60,20 @@ fn evaluate(expression: *const std::ffi::c_char, out_value: *mut ShyValue) -> Sh
     //   local NUL-terminated byte arrays that live for the duration of the call.
     // - Non-null output pointers come from valid mutable ShyValue storage.
     unsafe { shy_evaluate_no_vars(expression, out_value) }
+}
+
+fn evaluate_with_options(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    out_value: *mut ShyValue,
+) -> ShyStatus {
+    // SAFETY:
+    // - Tests pass null pointers only for API paths that explicitly accept and
+    //   reject null pointers before dereferencing.
+    // - Non-null expression pointers come from NUL-terminated CString values.
+    // - Non-null options pointers come from valid ShyEvalOptions storage.
+    // - Non-null output pointers come from valid mutable ShyValue storage.
+    unsafe { shy_evaluate_no_vars_with_options(expression, options, out_value) }
 }
 
 fn evaluate_with_callback(
@@ -81,6 +107,22 @@ fn evaluate_ex(
     unsafe { shy_evaluate_no_vars_ex(expression, out_value, out_error) }
 }
 
+fn evaluate_with_options_ex(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    out_value: *mut ShyValue,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    // SAFETY:
+    // - Tests pass null pointers only for API paths that explicitly accept and
+    //   reject null pointers before dereferencing.
+    // - Non-null expression pointers come from NUL-terminated CString values.
+    // - Non-null options pointers come from valid ShyEvalOptions storage.
+    // - Non-null output pointers come from valid mutable ShyValue storage.
+    // - Non-null error pointers come from valid mutable ShyError pointer storage.
+    unsafe { shy_evaluate_no_vars_with_options_ex(expression, options, out_value, out_error) }
+}
+
 fn evaluate_with_callback_ex(
     expression: *const c_char,
     resolver: ShyVariableResolver,
@@ -97,6 +139,48 @@ fn evaluate_with_callback_ex(
     // - Non-null output pointers come from valid mutable ShyValue storage.
     // - Non-null error pointers come from valid mutable ShyError pointer storage.
     unsafe { shy_evaluate_with_callback_ex(expression, resolver, user_data, out_value, out_error) }
+}
+
+fn evaluate_with_callback_with_options(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    resolver: ShyVariableResolver,
+    user_data: *mut c_void,
+    out_value: *mut ShyValue,
+) -> ShyStatus {
+    // SAFETY:
+    // - Tests pass null pointers only for API paths that explicitly accept and
+    //   reject null pointers before dereferencing.
+    // - Non-null expression pointers come from NUL-terminated CString values.
+    // - Non-null options pointers come from valid ShyEvalOptions storage.
+    // - Resolver callbacks used by these tests follow the FFI callback contract.
+    // - Non-null output pointers come from valid mutable ShyValue storage.
+    unsafe {
+        shy_evaluate_with_callback_with_options(expression, options, resolver, user_data, out_value)
+    }
+}
+
+fn evaluate_with_callback_with_options_ex(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    resolver: ShyVariableResolver,
+    user_data: *mut c_void,
+    out_value: *mut ShyValue,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    // SAFETY:
+    // - Tests pass null pointers only for API paths that explicitly accept and
+    //   reject null pointers before dereferencing.
+    // - Non-null expression pointers come from NUL-terminated CString values.
+    // - Non-null options pointers come from valid ShyEvalOptions storage.
+    // - Resolver callbacks used by these tests follow the FFI callback contract.
+    // - Non-null output pointers come from valid mutable ShyValue storage.
+    // - Non-null error pointers come from valid mutable ShyError pointer storage.
+    unsafe {
+        shy_evaluate_with_callback_with_options_ex(
+            expression, options, resolver, user_data, out_value, out_error,
+        )
+    }
 }
 
 fn parse_expression(
@@ -127,6 +211,38 @@ fn parse_expression_ex(
     //   pointer storage.
     // - Non-null error pointers come from valid mutable ShyError pointer storage.
     unsafe { shy_parse_expression_ex(expression, out_expression, out_error) }
+}
+
+fn parse_expression_with_options(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    out_expression: *mut *mut ShyParsedExpression,
+) -> ShyStatus {
+    // SAFETY:
+    // - Tests pass null pointers only for API paths that explicitly accept and
+    //   reject null pointers before dereferencing.
+    // - Non-null expression pointers come from NUL-terminated CString values.
+    // - Non-null options pointers come from valid ShyEvalOptions storage.
+    // - Non-null output pointers come from valid mutable ShyParsedExpression
+    //   pointer storage.
+    unsafe { shy_parse_expression_with_options(expression, options, out_expression) }
+}
+
+fn parse_expression_with_options_ex(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    out_expression: *mut *mut ShyParsedExpression,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    // SAFETY:
+    // - Tests pass null pointers only for API paths that explicitly accept and
+    //   reject null pointers before dereferencing.
+    // - Non-null expression pointers come from NUL-terminated CString values.
+    // - Non-null options pointers come from valid ShyEvalOptions storage.
+    // - Non-null output pointers come from valid mutable ShyParsedExpression
+    //   pointer storage.
+    // - Non-null error pointers come from valid mutable ShyError pointer storage.
+    unsafe { shy_parse_expression_with_options_ex(expression, options, out_expression, out_error) }
 }
 
 fn evaluate_parsed_no_vars(
@@ -338,6 +454,41 @@ fn diagnostic_expected_token(
     //   NUL-terminated pointer borrowed from a live ShyError.
     let token = unsafe { CStr::from_ptr(token) };
     Some(token.to_string_lossy().into_owned())
+}
+
+fn default_options() -> ShyEvalOptions {
+    let mut options = ShyEvalOptions {
+        abi_size: 0,
+        max_input_bytes: 0,
+        max_tokens: 0,
+        max_ast_nodes: 0,
+        max_depth: 0,
+        max_function_args: 0,
+        max_parser_recoveries: 0,
+    };
+
+    assert_eq!(eval_options_default(&mut options), SHY_STATUS_OK);
+    options
+}
+
+fn assert_invalid_options_error(error: *const ShyError) {
+    assert_eq!(error_status(error), SHY_STATUS_INVALID_OPTIONS);
+    assert_eq!(error_stage(error), SHY_ERROR_STAGE_INPUT);
+    assert_eq!(error_code(error), SHY_ERROR_CODE_INVALID_OPTIONS);
+}
+
+fn assert_no_vars_invalid_options(options: ShyEvalOptions) {
+    let expression = c_string("1 + 2");
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_options_ex(expression.as_ptr(), &options, &mut out, &mut error);
+
+    assert_eq!(status, SHY_STATUS_INVALID_OPTIONS);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_invalid_options_error(error.as_ptr());
 }
 
 unsafe extern "C" fn resolve_x_to_integer(
@@ -569,6 +720,425 @@ unsafe extern "C" fn subnormal_float_resolver(
     }
 
     SHY_STATUS_OK
+}
+
+#[test]
+fn eval_options_default_writes_core_defaults() {
+    let mut options = ShyEvalOptions {
+        abi_size: 0,
+        max_input_bytes: 0,
+        max_tokens: 0,
+        max_ast_nodes: 0,
+        max_depth: 0,
+        max_function_args: 0,
+        max_parser_recoveries: 0,
+    };
+
+    let status = eval_options_default(&mut options);
+    let core = shunting_yard::EvalOptions::default();
+
+    assert_eq!(status, SHY_STATUS_OK);
+    assert_eq!(
+        options.abi_size,
+        std::mem::size_of::<ShyEvalOptions>() as u32
+    );
+    assert_eq!(options.max_input_bytes, core.max_input_bytes as u64);
+    assert_eq!(options.max_tokens, core.max_tokens as u64);
+    assert_eq!(options.max_ast_nodes, core.max_ast_nodes as u64);
+    assert_eq!(options.max_depth, core.max_depth as u64);
+    assert_eq!(options.max_function_args, core.max_function_args as u64);
+    assert_eq!(
+        options.max_parser_recoveries,
+        core.max_parser_recoveries as u64
+    );
+}
+
+#[test]
+fn eval_options_default_rejects_null_output() {
+    let status = eval_options_default(ptr::null_mut());
+
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
+}
+
+#[test]
+fn no_vars_with_options_succeeds_with_defaults() {
+    let expression = c_string("1 + 2");
+    let options = default_options();
+    let mut out = default_test_value();
+    let mut error = ptr::NonNull::<ShyError>::dangling().as_ptr();
+
+    let status = evaluate_with_options_ex(expression.as_ptr(), &options, &mut out, &mut error);
+
+    assert_eq!(status, SHY_STATUS_OK);
+    assert!(error.is_null());
+    assert_eq!(out.kind, SHY_VALUE_INTEGER);
+    assert_eq!(out.integer_value, 3);
+}
+
+#[test]
+fn no_vars_with_options_token_limit_reports_resource_error() {
+    let expression = c_string("1 + 2");
+    let mut options = default_options();
+    options.max_tokens = 1;
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_options_ex(expression.as_ptr(), &options, &mut out, &mut error);
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_RESOURCE_LIMIT);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_TOO_MANY_TOKENS);
+}
+
+#[test]
+fn no_vars_with_options_input_limit_reports_resource_error() {
+    let expression = c_string("1 + 2");
+    let mut options = default_options();
+    options.max_input_bytes = 1;
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_options_ex(expression.as_ptr(), &options, &mut out, &mut error);
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_RESOURCE_LIMIT);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_INPUT_TOO_LARGE);
+}
+
+#[test]
+fn no_vars_with_options_rejects_null_options() {
+    let expression = c_string("1 + 2");
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_options_ex(expression.as_ptr(), ptr::null(), &mut out, &mut error);
+
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_INPUT);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_NULL_POINTER);
+}
+
+#[test]
+fn with_options_rejects_invalid_abi_size() {
+    let mut options = default_options();
+    options.abi_size = 0;
+
+    assert_no_vars_invalid_options(options);
+}
+
+#[test]
+fn with_options_rejects_zero_limits() {
+    let mut options = default_options();
+    options.max_input_bytes = 0;
+    assert_no_vars_invalid_options(options);
+
+    let mut options = default_options();
+    options.max_tokens = 0;
+    assert_no_vars_invalid_options(options);
+
+    let mut options = default_options();
+    options.max_ast_nodes = 0;
+    assert_no_vars_invalid_options(options);
+
+    let mut options = default_options();
+    options.max_depth = 0;
+    assert_no_vars_invalid_options(options);
+
+    let mut options = default_options();
+    options.max_function_args = 0;
+    assert_no_vars_invalid_options(options);
+
+    let mut options = default_options();
+    options.max_parser_recoveries = 0;
+    assert_no_vars_invalid_options(options);
+}
+
+#[cfg(target_pointer_width = "32")]
+#[test]
+fn with_options_rejects_limits_that_do_not_fit_usize() {
+    let mut options = default_options();
+    options.max_tokens = u64::from(u32::MAX) + 1;
+
+    assert_no_vars_invalid_options(options);
+}
+
+#[test]
+fn callback_with_options_succeeds_with_defaults() {
+    let expression = c_string("x + 2");
+    let options = default_options();
+    let mut out = default_test_value();
+    let mut error = ptr::NonNull::<ShyError>::dangling().as_ptr();
+
+    let status = evaluate_with_callback_with_options_ex(
+        expression.as_ptr(),
+        &options,
+        Some(resolve_x_to_integer),
+        ptr::null_mut(),
+        &mut out,
+        &mut error,
+    );
+
+    assert_eq!(status, SHY_STATUS_OK);
+    assert!(error.is_null());
+    assert_eq!(out.kind, SHY_VALUE_INTEGER);
+    assert_eq!(out.integer_value, 42);
+}
+
+#[test]
+fn callback_with_options_token_limit_prevents_resolver_call() {
+    let expression = c_string("x + 2");
+    let mut options = default_options();
+    options.max_tokens = 1;
+    let mut context = TestContext {
+        value: 40,
+        calls: 0,
+    };
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_callback_with_options_ex(
+        expression.as_ptr(),
+        &options,
+        Some(resolve_from_user_data),
+        ptr::from_mut(&mut context).cast(),
+        &mut out,
+        &mut error,
+    );
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert_eq!(out, default_test_value());
+    assert_eq!(context.calls, 0);
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_RESOURCE_LIMIT);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_TOO_MANY_TOKENS);
+}
+
+#[test]
+fn callback_with_options_null_resolver_reports_input_error() {
+    let expression = c_string("x + 2");
+    let options = default_options();
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_callback_with_options_ex(
+        expression.as_ptr(),
+        &options,
+        None,
+        ptr::null_mut(),
+        &mut out,
+        &mut error,
+    );
+
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_INPUT);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_NULL_POINTER);
+}
+
+#[test]
+fn callback_with_options_resolver_error_reports_resolver_stage() {
+    let expression = c_string("x + 2");
+    let options = default_options();
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_callback_with_options_ex(
+        expression.as_ptr(),
+        &options,
+        Some(failing_resolver),
+        ptr::null_mut(),
+        &mut out,
+        &mut error,
+    );
+
+    assert_eq!(status, SHY_STATUS_RESOLVER_ERROR);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_RESOLVER);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_RESOLVER_ERROR);
+}
+
+#[test]
+fn callback_with_options_invalid_value_kind_reports_invalid_value_stage() {
+    let expression = c_string("x");
+    let options = default_options();
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_callback_with_options_ex(
+        expression.as_ptr(),
+        &options,
+        Some(invalid_kind_resolver),
+        ptr::null_mut(),
+        &mut out,
+        &mut error,
+    );
+
+    assert_eq!(status, SHY_STATUS_INVALID_VALUE);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_INVALID_VALUE);
+    assert_eq!(
+        error_code(error.as_ptr()),
+        SHY_ERROR_CODE_INVALID_VALUE_KIND
+    );
+}
+
+#[test]
+fn callback_with_options_rejects_null_options() {
+    let expression = c_string("x + 2");
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_with_callback_with_options_ex(
+        expression.as_ptr(),
+        ptr::null(),
+        Some(resolve_x_to_integer),
+        ptr::null_mut(),
+        &mut out,
+        &mut error,
+    );
+
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_INPUT);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_NULL_POINTER);
+}
+
+#[test]
+fn parse_with_options_succeeds_with_defaults() {
+    let expression = c_string("1 + 2");
+    let options = default_options();
+    let mut parsed = ptr::null_mut();
+    let mut error = ptr::NonNull::<ShyError>::dangling().as_ptr();
+
+    let status =
+        parse_expression_with_options_ex(expression.as_ptr(), &options, &mut parsed, &mut error);
+
+    assert_eq!(status, SHY_STATUS_OK);
+    assert!(!parsed.is_null());
+    assert!(error.is_null());
+
+    let _parsed = ParsedHandle::new(parsed);
+}
+
+#[test]
+fn parse_with_options_token_limit_reports_resource_error() {
+    let expression = c_string("1 + 2");
+    let mut options = default_options();
+    options.max_tokens = 1;
+    let mut parsed = ptr::NonNull::<ShyParsedExpression>::dangling().as_ptr();
+    let mut error = ptr::null_mut();
+
+    let status =
+        parse_expression_with_options_ex(expression.as_ptr(), &options, &mut parsed, &mut error);
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert!(parsed.is_null());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_RESOURCE_LIMIT);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_TOO_MANY_TOKENS);
+}
+
+#[test]
+fn parse_with_options_input_limit_reports_resource_error() {
+    let expression = c_string("1 + 2");
+    let mut options = default_options();
+    options.max_input_bytes = 1;
+    let mut parsed = ptr::NonNull::<ShyParsedExpression>::dangling().as_ptr();
+    let mut error = ptr::null_mut();
+
+    let status =
+        parse_expression_with_options_ex(expression.as_ptr(), &options, &mut parsed, &mut error);
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert!(parsed.is_null());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_RESOURCE_LIMIT);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_INPUT_TOO_LARGE);
+}
+
+#[test]
+fn parse_with_options_rejects_invalid_options() {
+    let expression = c_string("1 + 2");
+    let mut options = default_options();
+    options.abi_size = 0;
+    let mut parsed = ptr::NonNull::<ShyParsedExpression>::dangling().as_ptr();
+    let mut error = ptr::null_mut();
+
+    let status =
+        parse_expression_with_options_ex(expression.as_ptr(), &options, &mut parsed, &mut error);
+
+    assert_eq!(status, SHY_STATUS_INVALID_OPTIONS);
+    assert!(parsed.is_null());
+
+    let error = ErrorHandle::new(error);
+    assert_invalid_options_error(error.as_ptr());
+}
+
+#[test]
+fn parse_with_options_rejects_null_options() {
+    let expression = c_string("1 + 2");
+    let mut parsed = ptr::NonNull::<ShyParsedExpression>::dangling().as_ptr();
+    let mut error = ptr::null_mut();
+
+    let status =
+        parse_expression_with_options_ex(expression.as_ptr(), ptr::null(), &mut parsed, &mut error);
+
+    assert_eq!(status, SHY_STATUS_NULL_POINTER);
+    assert!(parsed.is_null());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_INPUT);
+    assert_eq!(error_code(error.as_ptr()), SHY_ERROR_CODE_NULL_POINTER);
+}
+
+#[test]
+fn status_only_with_options_variants_work() {
+    let no_vars_expression = c_string("1 + 2");
+    let callback_expression = c_string("x + 2");
+    let options = default_options();
+    let mut out = default_test_value();
+
+    let status = evaluate_with_options(no_vars_expression.as_ptr(), &options, &mut out);
+    assert_eq!(status, SHY_STATUS_OK);
+    assert_eq!(out.kind, SHY_VALUE_INTEGER);
+    assert_eq!(out.integer_value, 3);
+
+    out = default_test_value();
+    let status = evaluate_with_callback_with_options(
+        callback_expression.as_ptr(),
+        &options,
+        Some(resolve_x_to_integer),
+        ptr::null_mut(),
+        &mut out,
+    );
+    assert_eq!(status, SHY_STATUS_OK);
+    assert_eq!(out.kind, SHY_VALUE_INTEGER);
+    assert_eq!(out.integer_value, 42);
+
+    let mut parsed = ptr::null_mut();
+    let status = parse_expression_with_options(callback_expression.as_ptr(), &options, &mut parsed);
+    assert_eq!(status, SHY_STATUS_OK);
+    let _parsed = ParsedHandle::new(parsed);
 }
 
 #[test]

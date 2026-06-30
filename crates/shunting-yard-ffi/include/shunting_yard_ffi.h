@@ -17,6 +17,7 @@ enum {
     SHY_STATUS_PANIC = 4,
     SHY_STATUS_RESOLVER_ERROR = 5,
     SHY_STATUS_INVALID_VALUE = 6,
+    SHY_STATUS_INVALID_OPTIONS = 7,
 };
 
 enum {
@@ -72,6 +73,7 @@ enum {
 
     SHY_ERROR_CODE_RESOLVER_ERROR = 500,
     SHY_ERROR_CODE_INVALID_VALUE_KIND = 600,
+    SHY_ERROR_CODE_INVALID_OPTIONS = 700,
 };
 
 enum {
@@ -90,6 +92,26 @@ typedef struct ShyValue {
     int64_t integer_value;
     double float_value;
 } ShyValue;
+
+typedef struct ShyEvalOptions {
+    uint32_t abi_size;
+    uint64_t max_input_bytes;
+    uint64_t max_tokens;
+    uint64_t max_ast_nodes;
+    uint64_t max_depth;
+    uint64_t max_function_args;
+    uint64_t max_parser_recoveries;
+} ShyEvalOptions;
+
+/*
+ * Initialize ShyEvalOptions with the current default resource limits.
+ *
+ * Callers should initialize options with this function, adjust nonzero limits
+ * as needed, and leave abi_size set to sizeof(ShyEvalOptions). With-options
+ * entrypoints reject invalid abi_size values, zero limits, and limits that
+ * cannot fit in Rust usize.
+ */
+ShyStatus shy_eval_options_default(ShyEvalOptions *out_options);
 
 typedef struct ShyError ShyError;
 typedef struct ShyParsedExpression ShyParsedExpression;
@@ -133,6 +155,12 @@ ShyStatus shy_parse_expression(
     ShyParsedExpression **out_expression
 );
 
+ShyStatus shy_parse_expression_with_options(
+    const char *expression,
+    const ShyEvalOptions *options,
+    ShyParsedExpression **out_expression
+);
+
 /*
  * Extended parse function with optional error object reporting.
  *
@@ -148,6 +176,20 @@ ShyStatus shy_parse_expression_ex(
 );
 
 /*
+ * Extended parse function with caller-provided resource limits.
+ *
+ * Invalid options return SHY_STATUS_INVALID_OPTIONS. If out_error is not NULL,
+ * invalid options produce an input-stage ShyError with
+ * SHY_ERROR_CODE_INVALID_OPTIONS.
+ */
+ShyStatus shy_parse_expression_with_options_ex(
+    const char *expression,
+    const ShyEvalOptions *options,
+    ShyParsedExpression **out_expression,
+    ShyError **out_error
+);
+
+/*
  * Free a parsed-expression handle returned through shy_parse_expression*.
  * Passing NULL is allowed. Handles are immutable and must not be used after
  * they are freed.
@@ -156,6 +198,12 @@ void shy_parsed_expression_free(ShyParsedExpression *expression);
 
 ShyStatus shy_evaluate_no_vars(
     const char *expression,
+    ShyValue *out_value
+);
+
+ShyStatus shy_evaluate_no_vars_with_options(
+    const char *expression,
+    const ShyEvalOptions *options,
     ShyValue *out_value
 );
 
@@ -173,8 +221,30 @@ ShyStatus shy_evaluate_no_vars_ex(
     ShyError **out_error
 );
 
+/*
+ * Extended no-variable evaluation with caller-provided resource limits.
+ *
+ * Invalid options return SHY_STATUS_INVALID_OPTIONS. If out_error is not NULL,
+ * invalid options produce an input-stage ShyError with
+ * SHY_ERROR_CODE_INVALID_OPTIONS.
+ */
+ShyStatus shy_evaluate_no_vars_with_options_ex(
+    const char *expression,
+    const ShyEvalOptions *options,
+    ShyValue *out_value,
+    ShyError **out_error
+);
+
 ShyStatus shy_evaluate_with_callback(
     const char *expression,
+    ShyVariableResolver resolver,
+    void *user_data,
+    ShyValue *out_value
+);
+
+ShyStatus shy_evaluate_with_callback_with_options(
+    const char *expression,
+    const ShyEvalOptions *options,
     ShyVariableResolver resolver,
     void *user_data,
     ShyValue *out_value
@@ -190,6 +260,22 @@ ShyStatus shy_evaluate_with_callback(
  */
 ShyStatus shy_evaluate_with_callback_ex(
     const char *expression,
+    ShyVariableResolver resolver,
+    void *user_data,
+    ShyValue *out_value,
+    ShyError **out_error
+);
+
+/*
+ * Extended callback-backed evaluation with caller-provided resource limits.
+ *
+ * Invalid options return SHY_STATUS_INVALID_OPTIONS. If out_error is not NULL,
+ * invalid options produce an input-stage ShyError with
+ * SHY_ERROR_CODE_INVALID_OPTIONS.
+ */
+ShyStatus shy_evaluate_with_callback_with_options_ex(
+    const char *expression,
+    const ShyEvalOptions *options,
     ShyVariableResolver resolver,
     void *user_data,
     ShyValue *out_value,
