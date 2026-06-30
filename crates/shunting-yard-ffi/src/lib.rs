@@ -1699,6 +1699,119 @@ pub unsafe extern "C" fn shy_evaluate_with_callback(
     }
 }
 
+/// Evaluate an expression using a C callback and caller-provided resource limits.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `options` must be null or point to a valid
+/// [`ShyEvalOptions`]. `resolver` must be null or a valid function pointer
+/// that follows the [`ShyVariableResolver`] contract. `user_data` is
+/// caller-owned and is passed through without being dereferenced. `out_value`
+/// must be null or point to valid, writable storage for one [`ShyValue`].
+/// `out_error` must be null or point to valid, writable storage for one
+/// `ShyError *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_with_callback_with_options_ex(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    resolver: ShyVariableResolver,
+    user_data: *mut c_void,
+    out_value: *mut ShyValue,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    ffi_boundary_with_error(out_error, || {
+        clear_optional_error(out_error);
+
+        if expression.is_null() || options.is_null() || out_value.is_null() {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        }
+
+        let Some(resolver) = resolver else {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        };
+
+        // SAFETY:
+        // - options was checked for null above.
+        // - caller must provide a valid ShyEvalOptions pointer.
+        let options = unsafe { &*options };
+
+        let options = match eval_options_from_ffi(options) {
+            Ok(options) => options,
+            Err(status) => {
+                write_optional_error(out_error, invalid_options_error());
+                return status;
+            }
+        };
+
+        // SAFETY:
+        // - expression was checked for null above.
+        // - caller must provide a valid NUL-terminated C string.
+        // - CStr does not take ownership of the pointer.
+        let expression = unsafe { CStr::from_ptr(expression) };
+
+        let expression = match expression.to_str() {
+            Ok(expression) => expression,
+            Err(_) => {
+                write_optional_error(out_error, invalid_utf8_error());
+                return SHY_STATUS_INVALID_UTF8;
+            }
+        };
+
+        match evaluate_with_callback_with_core_options_ex_impl(
+            expression, &options, resolver, user_data,
+        ) {
+            Ok(value) => {
+                // SAFETY:
+                // - out_value was checked for null above.
+                // - caller must provide valid writable storage for ShyValue.
+                unsafe { out_value.write(value) };
+                SHY_STATUS_OK
+            }
+            Err(failure) => {
+                let status = failure.status;
+                write_optional_error(out_error, failure.error);
+                status
+            }
+        }
+    })
+}
+
+/// Evaluate an expression using a C callback and caller-provided resource limits.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `options` must be null or point to a valid
+/// [`ShyEvalOptions`]. `resolver` must be null or a valid function pointer
+/// that follows the [`ShyVariableResolver`] contract. `user_data` is
+/// caller-owned and is passed through without being dereferenced. `out_value`
+/// must be null or point to valid, writable storage for one [`ShyValue`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_with_callback_with_options(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    resolver: ShyVariableResolver,
+    user_data: *mut c_void,
+    out_value: *mut ShyValue,
+) -> ShyStatus {
+    // SAFETY:
+    // - forwards the caller-provided pointers to the extended entrypoint.
+    // - passes a null out_error pointer to preserve the status-only ABI.
+    unsafe {
+        shy_evaluate_with_callback_with_options_ex(
+            expression,
+            options,
+            resolver,
+            user_data,
+            out_value,
+            ptr::null_mut(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

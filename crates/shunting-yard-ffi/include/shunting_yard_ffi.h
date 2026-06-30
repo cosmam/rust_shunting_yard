@@ -222,6 +222,14 @@ ShyStatus shy_evaluate_with_callback(
     ShyValue *out_value
 );
 
+ShyStatus shy_evaluate_with_callback_with_options(
+    const char *expression,
+    const ShyEvalOptions *options,
+    ShyVariableResolver resolver,
+    void *user_data,
+    ShyValue *out_value
+);
+
 /*
  * Extended callback-backed evaluation.
  *
@@ -232,6 +240,22 @@ ShyStatus shy_evaluate_with_callback(
  */
 ShyStatus shy_evaluate_with_callback_ex(
     const char *expression,
+    ShyVariableResolver resolver,
+    void *user_data,
+    ShyValue *out_value,
+    ShyError **out_error
+);
+
+/*
+ * Extended callback-backed evaluation with caller-provided resource limits.
+ *
+ * Invalid options return SHY_STATUS_INVALID_OPTIONS. If out_error is not NULL,
+ * invalid options produce an input-stage ShyError with
+ * SHY_ERROR_CODE_INVALID_OPTIONS.
+ */
+ShyStatus shy_evaluate_with_callback_with_options_ex(
+    const char *expression,
+    const ShyEvalOptions *options,
     ShyVariableResolver resolver,
     void *user_data,
     ShyValue *out_value,
