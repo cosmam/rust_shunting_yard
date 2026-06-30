@@ -138,6 +138,12 @@ target.
   reporting;
 - repeated evaluation of the same parsed handle must be tested;
 - callback-backed parsed evaluation must resolve variables at evaluation time.
+- parse-stage errors must retain owned diagnostics inside `ShyError`;
+- diagnostic accessors must handle null errors and invalid indexes safely;
+- expected-token pointers must be borrowed from `ShyError`;
+- expected-token pointers must not be freed by C;
+- non-parse errors should report zero indexed diagnostics;
+- C smoke tests must cover parse diagnostic iteration.
 
 ## Current Policy Notes
 
