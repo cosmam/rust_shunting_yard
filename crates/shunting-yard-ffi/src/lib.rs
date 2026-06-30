@@ -151,6 +151,15 @@ pub struct ShyError {
     diagnostic_count: i32,
 }
 
+/// Opaque parsed-expression handle returned by FFI parse entrypoints.
+///
+/// C callers must release pointers to this type with
+/// [`shy_parsed_expression_free`].
+#[repr(C)]
+pub struct ShyParsedExpression {
+    parsed: shunting_yard::ParsedExpression<'static>,
+}
+
 /// C callback used to resolve variable names during evaluation.
 ///
 /// The callback receives a NUL-terminated variable name that is valid only for
@@ -245,6 +254,10 @@ fn allocate_error(error: ShyError) -> *mut ShyError {
     Box::into_raw(Box::new(error))
 }
 
+fn allocate_parsed_expression(expression: ShyParsedExpression) -> *mut ShyParsedExpression {
+    Box::into_raw(Box::new(expression))
+}
+
 fn clear_optional_error(out_error: *mut *mut ShyError) {
     if out_error.is_null() {
         return;
@@ -267,6 +280,17 @@ fn write_optional_error(out_error: *mut *mut ShyError, error: ShyError) {
     // - caller must provide writable storage for one ShyError pointer.
     // - out_error was checked for null above.
     unsafe { out_error.write(error) };
+}
+
+fn clear_parsed_expression_output(out_expression: *mut *mut ShyParsedExpression) {
+    if out_expression.is_null() {
+        return;
+    }
+
+    // SAFETY:
+    // - caller must provide writable storage for one ShyParsedExpression pointer.
+    // - out_expression was checked for null above.
+    unsafe { out_expression.write(ptr::null_mut()) };
 }
 
 fn input_error_parts(status: ShyStatus, code: i32, message: &'static str) -> ErrorParts {
@@ -521,6 +545,24 @@ impl ShyValue {
     }
 }
 
+/// Free a parsed-expression handle returned by an FFI parse entrypoint.
+///
+/// # Safety
+///
+/// `expression` must be null or a pointer returned by this crate through an
+/// `out_expression` parameter. It must not have been freed already.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_parsed_expression_free(expression: *mut ShyParsedExpression) {
+    if expression.is_null() {
+        return;
+    }
+
+    // SAFETY:
+    // - expression must have been returned by this crate through an out_expression parameter.
+    // - Box::from_raw takes ownership and drops the allocation exactly once.
+    unsafe { drop(Box::from_raw(expression)) };
+}
+
 /// Free an error object returned by an extended FFI entrypoint.
 ///
 /// # Safety
@@ -748,10 +790,30 @@ impl TryFrom<ShyValue> for shunting_yard::Value {
     }
 }
 
+fn parse_expression_ex_impl(expression: &str) -> Result<ShyParsedExpression, FfiFailure> {
+    match shunting_yard::parse_detailed(expression) {
+        Ok(parsed) => Ok(ShyParsedExpression {
+            parsed: parsed.into_owned(),
+        }),
+        Err(error) => Err(failure_from_parts(error_parts_from_core_error(error))),
+    }
+}
+
 fn evaluate_no_vars_ex_impl(expression: &str) -> Result<ShyValue, FfiFailure> {
     let variables = HashMap::new();
 
     match shunting_yard::evaluate_detailed(expression, &variables) {
+        Ok(value) => Ok(ShyValue::from_value(value)),
+        Err(error) => Err(failure_from_parts(error_parts_from_core_error(error))),
+    }
+}
+
+fn evaluate_parsed_no_vars_ex_impl(
+    expression: &ShyParsedExpression,
+) -> Result<ShyValue, FfiFailure> {
+    let variables = HashMap::new();
+
+    match shunting_yard::evaluate_parsed_detailed(&expression.parsed, &variables) {
         Ok(value) => Ok(ShyValue::from_value(value)),
         Err(error) => Err(failure_from_parts(error_parts_from_core_error(error))),
     }
@@ -777,6 +839,249 @@ fn evaluate_with_callback_ex_impl(
             };
             Err(failure_from_parts(parts))
         }
+    }
+}
+
+fn evaluate_parsed_with_callback_ex_impl(
+    expression: &ShyParsedExpression,
+    callback: ShyVariableResolverCallback,
+    user_data: *mut c_void,
+) -> Result<ShyValue, FfiFailure> {
+    let mut resolver = FfiResolver {
+        callback,
+        user_data,
+        last_error_parts: None,
+    };
+
+    match shunting_yard::evaluate_parsed_detailed(&expression.parsed, &mut resolver) {
+        Ok(value) => Ok(ShyValue::from_value(value)),
+        Err(error) => {
+            let parts = match resolver.last_error_parts {
+                Some(parts) => parts,
+                None => error_parts_from_core_error(error),
+            };
+            Err(failure_from_parts(parts))
+        }
+    }
+}
+
+/// Parse an expression into an owned parsed-expression handle.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `out_expression` must be null or point to valid,
+/// writable storage for one `ShyParsedExpression *`. `out_error` must be null
+/// or point to valid, writable storage for one `ShyError *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_parse_expression_ex(
+    expression: *const c_char,
+    out_expression: *mut *mut ShyParsedExpression,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    ffi_boundary_with_error(out_error, || {
+        clear_optional_error(out_error);
+        clear_parsed_expression_output(out_expression);
+
+        if expression.is_null() || out_expression.is_null() {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        }
+
+        // SAFETY:
+        // - expression was checked for null above.
+        // - caller must provide a valid NUL-terminated C string.
+        // - CStr does not take ownership of the pointer.
+        let expression = unsafe { CStr::from_ptr(expression) };
+
+        let expression = match expression.to_str() {
+            Ok(expression) => expression,
+            Err(_) => {
+                write_optional_error(out_error, invalid_utf8_error());
+                return SHY_STATUS_INVALID_UTF8;
+            }
+        };
+
+        match parse_expression_ex_impl(expression) {
+            Ok(parsed) => {
+                let parsed = allocate_parsed_expression(parsed);
+
+                // SAFETY:
+                // - out_expression was checked for null above.
+                // - caller must provide writable storage for one ShyParsedExpression pointer.
+                unsafe { out_expression.write(parsed) };
+                SHY_STATUS_OK
+            }
+            Err(failure) => {
+                let status = failure.status;
+                write_optional_error(out_error, failure.error);
+                status
+            }
+        }
+    })
+}
+
+/// Parse an expression into an owned parsed-expression handle.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `out_expression` must be null or point to valid,
+/// writable storage for one `ShyParsedExpression *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_parse_expression(
+    expression: *const c_char,
+    out_expression: *mut *mut ShyParsedExpression,
+) -> ShyStatus {
+    // SAFETY:
+    // - forwards the caller-provided pointers to the extended entrypoint.
+    // - passes a null out_error pointer to preserve the status-only ABI.
+    unsafe { shy_parse_expression_ex(expression, out_expression, ptr::null_mut()) }
+}
+
+/// Evaluate a parsed expression that does not require variable lookup.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a live parsed-expression handle
+/// returned by this crate. `out_value` must be null or point to valid, writable
+/// storage for one [`ShyValue`]. `out_error` must be null or point to valid,
+/// writable storage for one `ShyError *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_parsed_no_vars_ex(
+    expression: *const ShyParsedExpression,
+    out_value: *mut ShyValue,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    ffi_boundary_with_error(out_error, || {
+        clear_optional_error(out_error);
+
+        if expression.is_null() || out_value.is_null() {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        }
+
+        // SAFETY:
+        // - expression was checked for null above.
+        // - caller must pass a live handle returned by this crate.
+        let expression = unsafe { &*expression };
+
+        match evaluate_parsed_no_vars_ex_impl(expression) {
+            Ok(value) => {
+                // SAFETY:
+                // - out_value was checked for null above.
+                // - caller must provide valid writable storage for ShyValue.
+                unsafe { out_value.write(value) };
+                SHY_STATUS_OK
+            }
+            Err(failure) => {
+                let status = failure.status;
+                write_optional_error(out_error, failure.error);
+                status
+            }
+        }
+    })
+}
+
+/// Evaluate a parsed expression that does not require variable lookup.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a live parsed-expression handle
+/// returned by this crate. `out_value` must be null or point to valid, writable
+/// storage for one [`ShyValue`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_parsed_no_vars(
+    expression: *const ShyParsedExpression,
+    out_value: *mut ShyValue,
+) -> ShyStatus {
+    // SAFETY:
+    // - forwards the caller-provided pointers to the extended entrypoint.
+    // - passes a null out_error pointer to preserve the status-only ABI.
+    unsafe { shy_evaluate_parsed_no_vars_ex(expression, out_value, ptr::null_mut()) }
+}
+
+/// Evaluate a parsed expression using a C callback for variable lookup.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a live parsed-expression handle
+/// returned by this crate. `resolver` must be null or a valid function pointer
+/// that follows the [`ShyVariableResolver`] contract. `user_data` is
+/// caller-owned and is passed through without being dereferenced. `out_value`
+/// must be null or point to valid, writable storage for one [`ShyValue`].
+/// `out_error` must be null or point to valid, writable storage for one
+/// `ShyError *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_parsed_with_callback_ex(
+    expression: *const ShyParsedExpression,
+    resolver: ShyVariableResolver,
+    user_data: *mut c_void,
+    out_value: *mut ShyValue,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    ffi_boundary_with_error(out_error, || {
+        clear_optional_error(out_error);
+
+        if expression.is_null() || out_value.is_null() {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        }
+
+        let Some(resolver) = resolver else {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        };
+
+        // SAFETY:
+        // - expression was checked for null above.
+        // - caller must pass a live handle returned by this crate.
+        let expression = unsafe { &*expression };
+
+        match evaluate_parsed_with_callback_ex_impl(expression, resolver, user_data) {
+            Ok(value) => {
+                // SAFETY:
+                // - out_value was checked for null above.
+                // - caller must provide valid writable storage for ShyValue.
+                unsafe { out_value.write(value) };
+                SHY_STATUS_OK
+            }
+            Err(failure) => {
+                let status = failure.status;
+                write_optional_error(out_error, failure.error);
+                status
+            }
+        }
+    })
+}
+
+/// Evaluate a parsed expression using a C callback for variable lookup.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a live parsed-expression handle
+/// returned by this crate. `resolver` must be null or a valid function pointer
+/// that follows the [`ShyVariableResolver`] contract. `user_data` is
+/// caller-owned and is passed through without being dereferenced. `out_value`
+/// must be null or point to valid, writable storage for one [`ShyValue`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_parsed_with_callback(
+    expression: *const ShyParsedExpression,
+    resolver: ShyVariableResolver,
+    user_data: *mut c_void,
+    out_value: *mut ShyValue,
+) -> ShyStatus {
+    // SAFETY:
+    // - forwards the caller-provided pointers to the extended entrypoint.
+    // - passes a null out_error pointer to preserve the status-only ABI.
+    unsafe {
+        shy_evaluate_parsed_with_callback_ex(
+            expression,
+            resolver,
+            user_data,
+            out_value,
+            ptr::null_mut(),
+        )
     }
 }
 

@@ -341,6 +341,125 @@ static void test_callback_ex_reports_invalid_value_kind(void) {
     shy_error_free(error);
 }
 
+static void test_parse_and_evaluate_no_vars(void) {
+    ShyParsedExpression *parsed = NULL;
+    ShyValue value = {0};
+    ShyStatus status = shy_parse_expression("1 + 2", &parsed);
+
+    assert(status == SHY_STATUS_OK);
+    assert(parsed != NULL);
+
+    status = shy_evaluate_parsed_no_vars(parsed, &value);
+
+    assert(status == SHY_STATUS_OK);
+    assert(value.kind == SHY_VALUE_INTEGER);
+    assert(value.integer_value == 3);
+
+    shy_parsed_expression_free(parsed);
+}
+
+static void test_parse_once_evaluate_many(void) {
+    ShyParsedExpression *parsed = NULL;
+    ShyStatus status = shy_parse_expression("1 + 2", &parsed);
+
+    assert(status == SHY_STATUS_OK);
+    assert(parsed != NULL);
+
+    for (int i = 0; i < 3; i++) {
+        ShyValue value = {0};
+        status = shy_evaluate_parsed_no_vars(parsed, &value);
+
+        assert(status == SHY_STATUS_OK);
+        assert(value.kind == SHY_VALUE_INTEGER);
+        assert(value.integer_value == 3);
+    }
+
+    shy_parsed_expression_free(parsed);
+}
+
+static void test_parsed_callback_uses_runtime_user_data(void) {
+    ShyParsedExpression *parsed = NULL;
+    ShyValue value = {0};
+    TestContext context_a = {.value = 40, .calls = 0};
+    TestContext context_b = {.value = 10, .calls = 0};
+    ShyStatus status = shy_parse_expression("x + 2", &parsed);
+
+    assert(status == SHY_STATUS_OK);
+    assert(parsed != NULL);
+
+    status = shy_evaluate_parsed_with_callback(
+        parsed,
+        resolve_from_context,
+        &context_a,
+        &value
+    );
+
+    assert(status == SHY_STATUS_OK);
+    assert(value.kind == SHY_VALUE_INTEGER);
+    assert(value.integer_value == 42);
+
+    value = (ShyValue){0};
+    status = shy_evaluate_parsed_with_callback(
+        parsed,
+        resolve_from_context,
+        &context_b,
+        &value
+    );
+
+    assert(status == SHY_STATUS_OK);
+    assert(value.kind == SHY_VALUE_INTEGER);
+    assert(value.integer_value == 12);
+    assert(context_a.calls == 1);
+    assert(context_b.calls == 1);
+
+    shy_parsed_expression_free(parsed);
+}
+
+static void test_parsed_ex_evaluation_success_clears_error(void) {
+    ShyParsedExpression *parsed = NULL;
+    ShyValue value = {0};
+    ShyError *error = (ShyError *)1;
+    TestContext context = {.value = 40, .calls = 0};
+    ShyStatus status = shy_parse_expression("x + 2", &parsed);
+
+    assert(status == SHY_STATUS_OK);
+    assert(parsed != NULL);
+
+    status = shy_evaluate_parsed_with_callback_ex(
+        parsed,
+        resolve_from_context,
+        &context,
+        &value,
+        &error
+    );
+
+    assert(status == SHY_STATUS_OK);
+    assert(error == NULL);
+    assert(value.kind == SHY_VALUE_INTEGER);
+    assert(value.integer_value == 42);
+    assert(context.calls == 1);
+
+    shy_parsed_expression_free(parsed);
+}
+
+static void test_parse_expression_ex_reports_parse_error(void) {
+    ShyParsedExpression *parsed = NULL;
+    ShyError *error = NULL;
+    ShyStatus status = shy_parse_expression_ex("1 +", &parsed, &error);
+
+    assert(status == SHY_STATUS_EVALUATION_ERROR);
+    assert(parsed == NULL);
+    assert(error != NULL);
+    assert(shy_error_stage(error) == SHY_ERROR_STAGE_PARSE);
+    assert(shy_error_diagnostic_count(error) >= 1);
+
+    shy_error_free(error);
+}
+
+static void test_parsed_expression_free_null(void) {
+    shy_parsed_expression_free(NULL);
+}
+
 static void test_error_accessors_handle_null(void) {
     assert(shy_error_status(NULL) == SHY_STATUS_NULL_POINTER);
     assert(shy_error_stage(NULL) == SHY_ERROR_STAGE_NONE);
@@ -373,6 +492,12 @@ int main(void) {
     test_no_vars_ex_error_output_may_be_null();
     test_callback_ex_reports_resolver_error();
     test_callback_ex_reports_invalid_value_kind();
+    test_parse_and_evaluate_no_vars();
+    test_parse_once_evaluate_many();
+    test_parsed_callback_uses_runtime_user_data();
+    test_parsed_ex_evaluation_success_clears_error();
+    test_parse_expression_ex_reports_parse_error();
+    test_parsed_expression_free_null();
     test_error_accessors_handle_null();
 
     puts("shunting_yard_ffi smoke test passed");

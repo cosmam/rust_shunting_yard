@@ -21,6 +21,7 @@
 )]
 
 use crate::tokens::LexicalError;
+use std::borrow::Cow;
 
 /// Parsed expression node.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,8 +32,8 @@ pub enum Expression<'input> {
     Integer(i64),
     /// Floating-point literal.
     Float(f64),
-    /// Variable reference borrowed from the original input text.
-    Variable(&'input str),
+    /// Variable reference parsed from the original input text.
+    Variable(Cow<'input, str>),
     /// Binary operator expression with a left operand, operator, and right operand.
     BinaryOperation {
         lhs: Box<Expression<'input>>,
@@ -53,6 +54,32 @@ pub enum Expression<'input> {
     LexicalError(LexicalError),
     /// Parser recovery placeholder for a syntactically invalid expression.
     Error,
+}
+
+impl<'input> Expression<'input> {
+    pub(crate) fn into_owned(self) -> Expression<'static> {
+        match self {
+            Expression::Bool(value) => Expression::Bool(value),
+            Expression::Integer(value) => Expression::Integer(value),
+            Expression::Float(value) => Expression::Float(value),
+            Expression::Variable(name) => Expression::Variable(Cow::Owned(name.into_owned())),
+            Expression::BinaryOperation { lhs, operator, rhs } => Expression::BinaryOperation {
+                lhs: Box::new(lhs.into_owned()),
+                operator,
+                rhs: Box::new(rhs.into_owned()),
+            },
+            Expression::UnaryOperation { value, operator } => Expression::UnaryOperation {
+                value: Box::new(value.into_owned()),
+                operator,
+            },
+            Expression::Function { func, arguments } => Expression::Function {
+                func,
+                arguments: arguments.into_iter().map(Expression::into_owned).collect(),
+            },
+            Expression::LexicalError(error) => Expression::LexicalError(error),
+            Expression::Error => Expression::Error,
+        }
+    }
 }
 
 /// Operator parsed from infix, prefix, or postfix syntax.
@@ -311,7 +338,7 @@ mod tests {
         fn prop_parse_variable_reference(name in variable_name()) {
             prop_assert_eq!(
                 parse_expression(&name),
-                Ok(Box::new(Expression::Variable(name.as_str())))
+                Ok(Box::new(Expression::Variable(name.as_str().into())))
             );
         }
 
@@ -1354,7 +1381,7 @@ mod tests {
         let values: Vec<Expression> = vec![
             Expression::Integer(10),
             Expression::Float(12.1),
-            Expression::Variable("Test_Name"),
+            Expression::Variable("Test_Name".into()),
         ];
 
         assert_eq!(
@@ -1396,7 +1423,7 @@ mod tests {
         let values: Vec<Expression> = vec![
             Expression::Integer(10),
             Expression::Float(12.1),
-            Expression::Variable("Test_Name"),
+            Expression::Variable("Test_Name".into()),
         ];
 
         assert_eq!(
@@ -1486,7 +1513,7 @@ mod tests {
             Expression::BinaryOperation {
                 lhs: Box::new(Expression::Integer(10)),
                 operator: Opcode::Power,
-                rhs: Box::new(Expression::Variable("Test_Var")),
+                rhs: Box::new(Expression::Variable("Test_Var".into())),
             },
         ];
 

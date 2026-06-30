@@ -206,7 +206,7 @@ where
         }
 
         Expression::Variable(name) => {
-            let value = resolver.resolve(name)?;
+            let value = resolver.resolve(name.as_ref())?;
             validate_value(value)
         }
 
@@ -1420,7 +1420,7 @@ mod tests {
     fn test_eval_variable_known() {
         let mut variables: HashMap<String, Value> = HashMap::new();
         variables.insert("Test_Name".to_string(), Value::Integer(42));
-        let expr = Box::new(Expression::Variable("Test_Name"));
+        let expr = Box::new(Expression::Variable("Test_Name".into()));
 
         let result = eval(&expr, &variables);
 
@@ -1435,7 +1435,7 @@ mod tests {
     fn test_eval_variable_rejects_invalid_float(#[case] value: f64, #[case] expected: EvalError) {
         let mut variables: HashMap<String, Value> = HashMap::new();
         variables.insert("Test_Name".to_string(), Value::Float(value));
-        let expr = Box::new(Expression::Variable("Test_Name"));
+        let expr = Box::new(Expression::Variable("Test_Name".into()));
 
         let result = eval(&expr, &variables);
 
@@ -1506,7 +1506,7 @@ mod tests {
         let variables: HashMap<String, Value> = HashMap::new();
         let expr = Box::new(Expression::UnaryOperation {
             operator: Opcode::Degrees,
-            value: Box::new(Expression::Variable("Test_Name")),
+            value: Box::new(Expression::Variable("Test_Name".into())),
         });
 
         let result = eval(&expr, &variables);
@@ -1736,7 +1736,7 @@ mod tests {
     fn test_binary_eval_variable_unknown_lhs() {
         let variables: HashMap<String, Value> = HashMap::new();
         let expr = Box::new(Expression::BinaryOperation {
-            lhs: Box::new(Expression::Variable("Test_Name")),
+            lhs: Box::new(Expression::Variable("Test_Name".into())),
             operator: Opcode::LogicalOr,
             rhs: Box::new(Expression::Bool(true)),
         });
@@ -1755,7 +1755,7 @@ mod tests {
         let expr = Box::new(Expression::BinaryOperation {
             lhs: Box::new(Expression::Bool(true)),
             operator: Opcode::LogicalOr,
-            rhs: Box::new(Expression::Variable("Test_Name")),
+            rhs: Box::new(Expression::Variable("Test_Name".into())),
         });
 
         let result = eval(&expr, &variables);
@@ -1844,7 +1844,7 @@ mod tests {
             let mut variables = HashMap::new();
             variables.insert("x".to_string(), value.clone());
 
-            prop_assert_eq!(eval(&Expression::Variable("x"), &variables), Ok(value));
+            prop_assert_eq!(eval(&Expression::Variable("x".into()), &variables), Ok(value));
         }
 
         #[test]
@@ -1855,14 +1855,14 @@ mod tests {
                 Err(EvalError::InvalidExpression)
             );
             prop_assert_eq!(
-                eval(&Expression::Variable("missing"), &HashMap::new()),
+                eval(&Expression::Variable("missing".into()), &HashMap::new()),
                 Err(EvalError::UnknownVariable("missing".to_string()))
             );
             prop_assert_eq!(
                 eval(
                     &Expression::UnaryOperation {
                         operator: Opcode::Plus,
-                        value: Box::new(Expression::Variable("missing")),
+                        value: Box::new(Expression::Variable("missing".into())),
                     },
                     &HashMap::new(),
                 ),
@@ -1871,7 +1871,7 @@ mod tests {
             prop_assert_eq!(
                 eval(
                     &Expression::BinaryOperation {
-                        lhs: Box::new(Expression::Variable("missing")),
+                        lhs: Box::new(Expression::Variable("missing".into())),
                         operator: Opcode::Plus,
                         rhs: Box::new(Expression::Integer(1)),
                     },

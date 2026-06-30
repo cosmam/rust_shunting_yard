@@ -172,17 +172,27 @@ The FFI crate exposes simple status-only entrypoints:
 
 - `shy_evaluate_no_vars`
 - `shy_evaluate_with_callback`
+- `shy_parse_expression`
+- `shy_evaluate_parsed_no_vars`
+- `shy_evaluate_parsed_with_callback`
 
 It also exposes extended `_ex` entrypoints that can return an owned `ShyError`
 through `ShyError **out_error`:
 
 - `shy_evaluate_no_vars_ex`
 - `shy_evaluate_with_callback_ex`
+- `shy_parse_expression_ex`
+- `shy_evaluate_parsed_no_vars_ex`
+- `shy_evaluate_parsed_with_callback_ex`
 
 Passing `out_error = NULL` is allowed and disables error object allocation. If
 an error object is returned, the C caller owns it and must release it with
 `shy_error_free`. Pointers returned by `shy_error_message` are borrowed from
 the error object and remain valid only until `shy_error_free`.
+
+The FFI crate also exposes opaque parsed-expression handles. C callers can
+parse once, evaluate the handle repeatedly with no variables or callback-backed
+variables, and release the handle with `shy_parsed_expression_free`.
 
 ## Verification
 
