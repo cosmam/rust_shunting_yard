@@ -110,6 +110,21 @@ pub const SHY_ERROR_CODE_RESOLVER_ERROR: i32 = 500;
 /// A callback returned an unknown ShyValue kind.
 pub const SHY_ERROR_CODE_INVALID_VALUE_KIND: i32 = 600;
 
+/// No diagnostic is available for the requested index.
+pub const SHY_DIAGNOSTIC_KIND_NONE: i32 = 0;
+/// The parser received an invalid token.
+pub const SHY_DIAGNOSTIC_KIND_INVALID_TOKEN: i32 = 1;
+/// The input ended before the parser could finish an expression.
+pub const SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_EOF: i32 = 2;
+/// The parser found an unexpected token.
+pub const SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_TOKEN: i32 = 3;
+/// The parser found extra input after a complete expression.
+pub const SHY_DIAGNOSTIC_KIND_EXTRA_TOKEN: i32 = 4;
+/// The parser reported a user diagnostic.
+pub const SHY_DIAGNOSTIC_KIND_USER: i32 = 5;
+/// The parser recovered from malformed source text.
+pub const SHY_DIAGNOSTIC_KIND_RECOVERY: i32 = 6;
+
 /// Runtime value kind returned through the C ABI.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +151,12 @@ pub struct ShyValue {
     pub float_value: f64,
 }
 
+struct FfiDiagnostic {
+    kind: i32,
+    span: Option<(i32, i32)>,
+    expected_tokens: Vec<CString>,
+}
+
 /// Opaque error object returned by extended FFI entrypoints.
 ///
 /// C callers must release pointers to this type with [`shy_error_free`].
@@ -149,6 +170,7 @@ pub struct ShyError {
     span_start: i32,
     span_end: i32,
     diagnostic_count: i32,
+    diagnostics: Vec<FfiDiagnostic>,
 }
 
 /// Opaque parsed-expression handle returned by FFI parse entrypoints.
@@ -218,7 +240,7 @@ struct ErrorParts {
     code: i32,
     message: String,
     span: Option<(usize, usize)>,
-    diagnostic_count: usize,
+    diagnostics: Vec<FfiDiagnostic>,
 }
 
 impl ErrorParts {
@@ -240,7 +262,8 @@ impl ErrorParts {
             has_span,
             span_start,
             span_end,
-            diagnostic_count: usize_to_i32_saturating(self.diagnostic_count),
+            diagnostic_count: usize_to_i32_saturating(self.diagnostics.len()),
+            diagnostics: self.diagnostics,
         }
     }
 }
@@ -300,7 +323,7 @@ fn input_error_parts(status: ShyStatus, code: i32, message: &'static str) -> Err
         code,
         message: message.to_owned(),
         span: None,
-        diagnostic_count: 0,
+        diagnostics: Vec::new(),
     }
 }
 
@@ -329,7 +352,7 @@ fn panic_error() -> ShyError {
         code: SHY_ERROR_CODE_PANIC,
         message: "Rust panic caught at FFI boundary".to_owned(),
         span: None,
-        diagnostic_count: 0,
+        diagnostics: Vec::new(),
     }
     .into_ffi_error()
 }
@@ -341,7 +364,7 @@ fn resolver_error_parts(status: ShyStatus) -> ErrorParts {
         code: SHY_ERROR_CODE_RESOLVER_ERROR,
         message: "variable resolver callback failed".to_owned(),
         span: None,
-        diagnostic_count: 0,
+        diagnostics: Vec::new(),
     }
 }
 
@@ -352,7 +375,7 @@ fn invalid_value_error_parts() -> ErrorParts {
         code: SHY_ERROR_CODE_INVALID_VALUE_KIND,
         message: "callback returned unknown ShyValue kind".to_owned(),
         span: None,
-        diagnostic_count: 0,
+        diagnostics: Vec::new(),
     }
 }
 
@@ -378,7 +401,7 @@ fn resource_limit_error_parts(error: shunting_yard::ResourceLimitError) -> Error
         code,
         message: error.to_string(),
         span: None,
-        diagnostic_count: 1,
+        diagnostics: Vec::new(),
     }
 }
 
@@ -392,7 +415,68 @@ fn lexical_error_parts(
         code: SHY_ERROR_CODE_LEXICAL_ERROR,
         message: format!("lexical error: {error}"),
         span: span.map(|span| (span.start, span.end)),
-        diagnostic_count: 1,
+        diagnostics: Vec::new(),
+    }
+}
+
+fn expected_tokens_from_kind(kind: &shunting_yard::ParseDiagnosticKind) -> Vec<CString> {
+    match kind {
+        shunting_yard::ParseDiagnosticKind::UnrecognizedEof { expected }
+        | shunting_yard::ParseDiagnosticKind::UnrecognizedToken { expected, .. } => expected
+            .iter()
+            .map(|expected| cstring_lossy_no_nul(expected.clone()))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn ffi_diagnostic_from_parse_diagnostic(
+    diagnostic: &shunting_yard::ParseDiagnostic,
+) -> FfiDiagnostic {
+    let span = diagnostic.span.map(|span| {
+        (
+            usize_to_i32_saturating(span.start),
+            usize_to_i32_saturating(span.end),
+        )
+    });
+
+    match &diagnostic.kind {
+        shunting_yard::ParseDiagnosticKind::InvalidToken => FfiDiagnostic {
+            kind: SHY_DIAGNOSTIC_KIND_INVALID_TOKEN,
+            span,
+            expected_tokens: Vec::new(),
+        },
+        shunting_yard::ParseDiagnosticKind::UnrecognizedEof { expected } => FfiDiagnostic {
+            kind: SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_EOF,
+            span,
+            expected_tokens: expected
+                .iter()
+                .map(|expected| cstring_lossy_no_nul(expected.clone()))
+                .collect(),
+        },
+        shunting_yard::ParseDiagnosticKind::UnrecognizedToken { expected, .. } => FfiDiagnostic {
+            kind: SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_TOKEN,
+            span,
+            expected_tokens: expected
+                .iter()
+                .map(|expected| cstring_lossy_no_nul(expected.clone()))
+                .collect(),
+        },
+        shunting_yard::ParseDiagnosticKind::ExtraToken { .. } => FfiDiagnostic {
+            kind: SHY_DIAGNOSTIC_KIND_EXTRA_TOKEN,
+            span,
+            expected_tokens: Vec::new(),
+        },
+        shunting_yard::ParseDiagnosticKind::User { .. } => FfiDiagnostic {
+            kind: SHY_DIAGNOSTIC_KIND_USER,
+            span,
+            expected_tokens: Vec::new(),
+        },
+        shunting_yard::ParseDiagnosticKind::Recovery { cause, .. } => FfiDiagnostic {
+            kind: SHY_DIAGNOSTIC_KIND_RECOVERY,
+            span,
+            expected_tokens: expected_tokens_from_kind(cause),
+        },
     }
 }
 
@@ -403,6 +487,11 @@ fn parse_error_parts(diagnostics: shunting_yard::ParseDiagnostics) -> ErrorParts
         .diagnostics
         .iter()
         .find_map(|diagnostic| diagnostic.span.map(|span| (span.start, span.end)));
+    let ffi_diagnostics = diagnostics
+        .diagnostics
+        .iter()
+        .map(ffi_diagnostic_from_parse_diagnostic)
+        .collect();
 
     let code = if recovery_count > 0 {
         SHY_ERROR_CODE_PARSE_RECOVERY
@@ -416,7 +505,7 @@ fn parse_error_parts(diagnostics: shunting_yard::ParseDiagnostics) -> ErrorParts
         code,
         message: format!("parse failed with {diagnostic_count} diagnostic(s)"),
         span: first_span,
-        diagnostic_count,
+        diagnostics: ffi_diagnostics,
     }
 }
 
@@ -430,7 +519,7 @@ fn eval_error_parts(error: shunting_yard::EvalError) -> ErrorParts {
             code: SHY_ERROR_CODE_PARSE_ERROR,
             message: "parser error".to_owned(),
             span: None,
-            diagnostic_count: 1,
+            diagnostics: Vec::new(),
         },
         shunting_yard::EvalError::ParserRecovery { count } => ErrorParts {
             status: SHY_STATUS_EVALUATION_ERROR,
@@ -438,7 +527,7 @@ fn eval_error_parts(error: shunting_yard::EvalError) -> ErrorParts {
             code: SHY_ERROR_CODE_PARSE_RECOVERY,
             message: format!("parser recovered from {count} error(s)"),
             span: None,
-            diagnostic_count: count,
+            diagnostics: Vec::new(),
         },
         error @ shunting_yard::EvalError::InvalidArity { .. } => {
             eval_error_code_parts(error, SHY_ERROR_CODE_INVALID_ARITY)
@@ -486,7 +575,7 @@ fn eval_error_code_parts(error: shunting_yard::EvalError, code: i32) -> ErrorPar
         code,
         message: error.to_string(),
         span: None,
-        diagnostic_count: 1,
+        diagnostics: Vec::new(),
     }
 }
 
@@ -725,6 +814,132 @@ pub unsafe extern "C" fn shy_error_diagnostic_count(error: *const ShyError) -> i
     // - error was checked for null above.
     // - caller must pass a live ShyError pointer returned by this crate.
     unsafe { (*error).diagnostic_count }
+}
+
+fn with_diagnostic<T>(
+    error: *const ShyError,
+    index: i32,
+    default: T,
+    f: impl FnOnce(&FfiDiagnostic) -> T,
+) -> T {
+    if error.is_null() || index < 0 {
+        return default;
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    let error = unsafe { &*error };
+
+    match error.diagnostics.get(index as usize) {
+        Some(diagnostic) => f(diagnostic),
+        None => default,
+    }
+}
+
+/// Return the kind for an indexed parse diagnostic.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_diagnostic_kind(error: *const ShyError, index: i32) -> i32 {
+    with_diagnostic(error, index, SHY_DIAGNOSTIC_KIND_NONE, |diagnostic| {
+        diagnostic.kind
+    })
+}
+
+/// Return nonzero when an indexed parse diagnostic contains a source span.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_diagnostic_has_span(error: *const ShyError, index: i32) -> i32 {
+    with_diagnostic(error, index, 0, |diagnostic| {
+        i32::from(diagnostic.span.is_some())
+    })
+}
+
+/// Return the inclusive start byte offset for an indexed parse diagnostic.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_diagnostic_span_start(
+    error: *const ShyError,
+    index: i32,
+) -> i32 {
+    with_diagnostic(error, index, -1, |diagnostic| {
+        diagnostic.span.map_or(-1, |(start, _)| start)
+    })
+}
+
+/// Return the exclusive end byte offset for an indexed parse diagnostic.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_diagnostic_span_end(error: *const ShyError, index: i32) -> i32 {
+    with_diagnostic(error, index, -1, |diagnostic| {
+        diagnostic.span.map_or(-1, |(_, end)| end)
+    })
+}
+
+/// Return the expected-token count for an indexed parse diagnostic.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_diagnostic_expected_count(
+    error: *const ShyError,
+    index: i32,
+) -> i32 {
+    with_diagnostic(error, index, 0, |diagnostic| {
+        usize_to_i32_saturating(diagnostic.expected_tokens.len())
+    })
+}
+
+/// Return a borrowed expected-token string for an indexed parse diagnostic.
+///
+/// The returned pointer remains valid until `shy_error_free(error)`.
+///
+/// # Safety
+///
+/// `error` must be null or a live pointer returned by this crate through an
+/// `out_error` parameter.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_error_diagnostic_expected_token(
+    error: *const ShyError,
+    diagnostic_index: i32,
+    expected_index: i32,
+) -> *const c_char {
+    if error.is_null() || diagnostic_index < 0 || expected_index < 0 {
+        return ptr::null();
+    }
+
+    // SAFETY:
+    // - error was checked for null above.
+    // - caller must pass a live ShyError pointer returned by this crate.
+    let error = unsafe { &*error };
+
+    let Some(diagnostic) = error.diagnostics.get(diagnostic_index as usize) else {
+        return ptr::null();
+    };
+
+    let Some(expected) = diagnostic.expected_tokens.get(expected_index as usize) else {
+        return ptr::null();
+    };
+
+    expected.as_ptr()
 }
 
 struct FfiResolver {

@@ -286,7 +286,7 @@ static void test_no_vars_ex_reports_lexical_span(void) {
     assert(shy_error_has_span(error) == 1);
     assert(shy_error_span_start(error) == 0);
     assert(shy_error_span_end(error) == 1);
-    assert(shy_error_diagnostic_count(error) == 1);
+    assert(shy_error_diagnostic_count(error) == 0);
 
     shy_error_free(error);
 }
@@ -456,6 +456,74 @@ static void test_parse_expression_ex_reports_parse_error(void) {
     shy_error_free(error);
 }
 
+static void test_diagnostic_accessors_handle_null(void) {
+    assert(shy_error_diagnostic_kind(NULL, 0) == SHY_DIAGNOSTIC_KIND_NONE);
+    assert(shy_error_diagnostic_has_span(NULL, 0) == 0);
+    assert(shy_error_diagnostic_span_start(NULL, 0) == -1);
+    assert(shy_error_diagnostic_span_end(NULL, 0) == -1);
+    assert(shy_error_diagnostic_expected_count(NULL, 0) == 0);
+    assert(shy_error_diagnostic_expected_token(NULL, 0, 0) == NULL);
+}
+
+static void test_parse_diagnostic_iteration(void) {
+    ShyParsedExpression *parsed = NULL;
+    ShyError *error = NULL;
+    ShyStatus status = shy_parse_expression_ex("1 +", &parsed, &error);
+
+    assert(status == SHY_STATUS_EVALUATION_ERROR);
+    assert(parsed == NULL);
+    assert(error != NULL);
+    assert(shy_error_stage(error) == SHY_ERROR_STAGE_PARSE);
+    assert(shy_error_diagnostic_count(error) >= 1);
+
+    int32_t kind = shy_error_diagnostic_kind(error, 0);
+    assert(
+        kind == SHY_DIAGNOSTIC_KIND_RECOVERY ||
+        kind == SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_EOF ||
+        kind == SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_TOKEN
+    );
+
+    assert(shy_error_diagnostic_has_span(error, 0) == 1);
+    assert(shy_error_diagnostic_span_start(error, 0) >= 0);
+    assert(
+        shy_error_diagnostic_span_end(error, 0) >=
+        shy_error_diagnostic_span_start(error, 0)
+    );
+
+    int32_t expected_count = shy_error_diagnostic_expected_count(error, 0);
+    assert(expected_count >= 1);
+
+    const char *token = shy_error_diagnostic_expected_token(error, 0, 0);
+    assert(token != NULL);
+    assert(token[0] != '\0');
+
+    assert(
+        shy_error_diagnostic_kind(error, shy_error_diagnostic_count(error)) ==
+        SHY_DIAGNOSTIC_KIND_NONE
+    );
+    assert(
+        shy_error_diagnostic_expected_token(error, 0, expected_count) == NULL
+    );
+
+    shy_error_free(error);
+}
+
+static void test_evaluation_error_has_no_indexed_diagnostics(void) {
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyError *error = NULL;
+    ShyStatus status = shy_evaluate_no_vars_ex("1 / 0", &value, &error);
+
+    assert(status == SHY_STATUS_EVALUATION_ERROR);
+    assert(value.integer_value == -1);
+    assert(error != NULL);
+    assert(shy_error_stage(error) == SHY_ERROR_STAGE_EVALUATION);
+    assert(shy_error_diagnostic_count(error) == 0);
+    assert(shy_error_diagnostic_kind(error, 0) == SHY_DIAGNOSTIC_KIND_NONE);
+    assert(shy_error_diagnostic_expected_token(error, 0, 0) == NULL);
+
+    shy_error_free(error);
+}
+
 static void test_parsed_expression_free_null(void) {
     shy_parsed_expression_free(NULL);
 }
@@ -497,6 +565,9 @@ int main(void) {
     test_parsed_callback_uses_runtime_user_data();
     test_parsed_ex_evaluation_success_clears_error();
     test_parse_expression_ex_reports_parse_error();
+    test_diagnostic_accessors_handle_null();
+    test_parse_diagnostic_iteration();
+    test_evaluation_error_has_no_indexed_diagnostics();
     test_parsed_expression_free_null();
     test_error_accessors_handle_null();
 

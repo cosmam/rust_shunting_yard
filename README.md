@@ -190,6 +190,11 @@ an error object is returned, the C caller owns it and must release it with
 `shy_error_free`. Pointers returned by `shy_error_message` are borrowed from
 the error object and remain valid only until `shy_error_free`.
 
+Parse-stage `ShyError` objects can also be inspected through indexed diagnostic
+accessors. These expose diagnostic kind, source span, and expected-token strings
+where available. Expected-token strings are borrowed from the error object and
+are intended for diagnostics/display rather than as a stable grammar schema.
+
 The FFI crate also exposes opaque parsed-expression handles. C callers can
 parse once, evaluate the handle repeatedly with no variables or callback-backed
 variables, and release the handle with `shy_parsed_expression_free`.

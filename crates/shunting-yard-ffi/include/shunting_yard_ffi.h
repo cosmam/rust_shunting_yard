@@ -74,6 +74,16 @@ enum {
     SHY_ERROR_CODE_INVALID_VALUE_KIND = 600,
 };
 
+enum {
+    SHY_DIAGNOSTIC_KIND_NONE = 0,
+    SHY_DIAGNOSTIC_KIND_INVALID_TOKEN = 1,
+    SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_EOF = 2,
+    SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_TOKEN = 3,
+    SHY_DIAGNOSTIC_KIND_EXTRA_TOKEN = 4,
+    SHY_DIAGNOSTIC_KIND_USER = 5,
+    SHY_DIAGNOSTIC_KIND_RECOVERY = 6,
+};
+
 typedef struct ShyValue {
     int32_t kind;
     uint8_t bool_value;
@@ -248,6 +258,35 @@ int32_t shy_error_has_span(const ShyError *error);
 int32_t shy_error_span_start(const ShyError *error);
 int32_t shy_error_span_end(const ShyError *error);
 int32_t shy_error_diagnostic_count(const ShyError *error);
+
+/*
+ * Indexed parse diagnostic accessors.
+ *
+ * These accessors are meaningful for parse-stage ShyError objects. For other
+ * errors, diagnostic count is zero and indexed accessors return default values.
+ *
+ * Passing NULL or an out-of-range diagnostic index returns the documented
+ * default value for the accessor. Invalid expected-token indexes return NULL.
+ *
+ * Returned strings are borrowed from ShyError and remain valid only until
+ * shy_error_free(error). Do not free returned strings.
+ *
+ * Expected-token strings are intended for diagnostics/display and should not be
+ * treated as a stable machine-readable grammar schema.
+ */
+int32_t shy_error_diagnostic_kind(const ShyError *error, int32_t index);
+int32_t shy_error_diagnostic_has_span(const ShyError *error, int32_t index);
+int32_t shy_error_diagnostic_span_start(const ShyError *error, int32_t index);
+int32_t shy_error_diagnostic_span_end(const ShyError *error, int32_t index);
+int32_t shy_error_diagnostic_expected_count(
+    const ShyError *error,
+    int32_t index
+);
+const char *shy_error_diagnostic_expected_token(
+    const ShyError *error,
+    int32_t diagnostic_index,
+    int32_t expected_index
+);
 
 #ifdef __cplusplus
 }

@@ -32,6 +32,12 @@ The core crate remains unsafe-free.
 - `shy_error_span_start`
 - `shy_error_span_end`
 - `shy_error_diagnostic_count`
+- `shy_error_diagnostic_kind`
+- `shy_error_diagnostic_has_span`
+- `shy_error_diagnostic_span_start`
+- `shy_error_diagnostic_span_end`
+- `shy_error_diagnostic_expected_count`
+- `shy_error_diagnostic_expected_token`
 
 ## Safety Policy
 
@@ -53,7 +59,8 @@ The core crate remains unsafe-free.
 
 ## Current Limitations
 
-- Full parse diagnostic iteration is not exposed yet.
+- Diagnostic iteration exposes kind, span, and expected tokens, but not the
+  full nested recovery structure yet.
 - FFI error messages are human-readable and are not a stable machine-readable
   format.
 - C smoke testing is Linux-first.
@@ -71,7 +78,19 @@ allocated error object to `*out_error` when requested.
 The error object exposes stable integer stage and code values through accessors
 rather than exposing Rust enums or core diagnostic structures directly. Source
 spans are available for lexical and parse failures when the core parser reports
-them. Parse errors expose a diagnostic count, but not the full diagnostic list.
+them.
+
+## Parse Diagnostic Iteration
+
+Parse-stage `ShyError` objects retain owned diagnostic records. C callers can
+inspect them by index through accessor functions.
+
+Diagnostic indexes are zero-based. Invalid indexes return safe defaults.
+Expected-token strings are borrowed from `ShyError` and remain valid only until
+`shy_error_free`.
+
+Expected-token strings are intended for diagnostics and display. They should not
+be treated as a stable machine-readable grammar schema.
 
 ## Parsed Expression Handles
 
@@ -111,5 +130,5 @@ the core evaluator and reported through the FFI as evaluation errors.
 
 ## Next Planned FFI Step
 
-Add full parse-diagnostic iteration through indexed accessors while keeping
-diagnostic storage behind Rust-owned opaque objects.
+Expand parse-diagnostic access only if C callers need more of the nested
+recovery structure or stable token classification.
