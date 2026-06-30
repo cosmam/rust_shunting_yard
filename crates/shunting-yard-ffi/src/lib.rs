@@ -110,6 +110,21 @@ pub const SHY_ERROR_CODE_RESOLVER_ERROR: i32 = 500;
 /// A callback returned an unknown ShyValue kind.
 pub const SHY_ERROR_CODE_INVALID_VALUE_KIND: i32 = 600;
 
+/// No diagnostic is available for the requested index.
+pub const SHY_DIAGNOSTIC_KIND_NONE: i32 = 0;
+/// The parser received an invalid token.
+pub const SHY_DIAGNOSTIC_KIND_INVALID_TOKEN: i32 = 1;
+/// The input ended before the parser could finish an expression.
+pub const SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_EOF: i32 = 2;
+/// The parser found an unexpected token.
+pub const SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_TOKEN: i32 = 3;
+/// The parser found extra input after a complete expression.
+pub const SHY_DIAGNOSTIC_KIND_EXTRA_TOKEN: i32 = 4;
+/// The parser reported a user diagnostic.
+pub const SHY_DIAGNOSTIC_KIND_USER: i32 = 5;
+/// The parser recovered from malformed source text.
+pub const SHY_DIAGNOSTIC_KIND_RECOVERY: i32 = 6;
+
 /// Runtime value kind returned through the C ABI.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
