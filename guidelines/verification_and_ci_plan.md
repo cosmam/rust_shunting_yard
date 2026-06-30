@@ -144,6 +144,17 @@ target.
 - expected-token pointers must not be freed by C;
 - non-parse errors should report zero indexed diagnostics;
 - C smoke tests must cover parse diagnostic iteration.
+- options must be initialized through `shy_eval_options_default`;
+- with-options entrypoints must reject null option pointers;
+- invalid ABI size must be rejected;
+- zero limits must be rejected;
+- overlarge values that cannot fit Rust `usize` must be rejected;
+- tight limits must produce resource-limit errors before evaluation side
+  effects;
+- callback with-options tests must prove resource limits can prevent callback
+  invocation;
+- C smoke tests must cover default options, valid options, resource-limit
+  failure, and invalid options.
 
 ## Current Policy Notes
 

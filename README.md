@@ -171,8 +171,11 @@ produce NaN, infinity, or subnormal floating-point values.
 The FFI crate exposes simple status-only entrypoints:
 
 - `shy_evaluate_no_vars`
+- `shy_evaluate_no_vars_with_options`
 - `shy_evaluate_with_callback`
+- `shy_evaluate_with_callback_with_options`
 - `shy_parse_expression`
+- `shy_parse_expression_with_options`
 - `shy_evaluate_parsed_no_vars`
 - `shy_evaluate_parsed_with_callback`
 
@@ -180,8 +183,11 @@ It also exposes extended `_ex` entrypoints that can return an owned `ShyError`
 through `ShyError **out_error`:
 
 - `shy_evaluate_no_vars_ex`
+- `shy_evaluate_no_vars_with_options_ex`
 - `shy_evaluate_with_callback_ex`
+- `shy_evaluate_with_callback_with_options_ex`
 - `shy_parse_expression_ex`
+- `shy_parse_expression_with_options_ex`
 - `shy_evaluate_parsed_no_vars_ex`
 - `shy_evaluate_parsed_with_callback_ex`
 
@@ -194,6 +200,11 @@ Parse-stage `ShyError` objects can also be inspected through indexed diagnostic
 accessors. These expose diagnostic kind, source span, and expected-token strings
 where available. Expected-token strings are borrowed from the error object and
 are intended for diagnostics/display rather than as a stable grammar schema.
+
+For configurable resource limits, initialize `ShyEvalOptions` with
+`shy_eval_options_default`, adjust nonzero limits as needed, and pass it to the
+`_with_options` entrypoints. Parsed-handle evaluation does not take options
+because parse-time limits are enforced when the handle is created.
 
 The FFI crate also exposes opaque parsed-expression handles. C callers can
 parse once, evaluate the handle repeatedly with no variables or callback-backed
