@@ -70,7 +70,7 @@ The core crate remains unsafe-free.
   full nested recovery structure yet.
 - FFI error messages are human-readable and are not a stable machine-readable
   format.
-- C smoke testing is Linux-first.
+- C smoke and packaging smoke testing are Linux-first.
 
 ## Error Reporting
 
@@ -126,8 +126,39 @@ C callers must not use a handle after freeing it.
 
 The initial C smoke test is Linux-first and exercises the dynamic library path
 by linking with `-lshunting_yard_ffi` and setting `LD_LIBRARY_PATH` to
-`target/debug`. Static-library smoke testing can be added as a separate
-follow-up.
+`target/debug`. It also compiles an ABI regression binary that freezes exported
+function names, status codes, error codes, callback shape, and public struct
+layouts.
+
+## Packaging And Distribution
+
+The FFI packaging smoke installs a native-consumer prefix with:
+
+```text
+include/shunting_yard_ffi.h
+lib/libshunting_yard_ffi.a
+lib/libshunting_yard_ffi.so
+lib/pkgconfig/shunting_yard_ffi.pc
+lib/cmake/ShuntingYardFFI/ShuntingYardFFIConfig.cmake
+lib/cmake/ShuntingYardFFI/ShuntingYardFFITargets.cmake
+```
+
+The generated pkg-config file exposes include and library flags for
+`shunting_yard_ffi`. The generated CMake package exposes
+`ShuntingYardFFI::ShuntingYardFFI`, plus shared and static imported targets
+when the matching artifacts are installed.
+
+Packaging smoke tests must build and run:
+
+- a pkg-config consumer;
+- a direct shared-library consumer;
+- a direct static-library consumer;
+- a CMake shared-library consumer;
+- a CMake static-library consumer.
+
+The standalone consumer example under `examples/c-consumer` demonstrates
+parsing, callback evaluation, resource limits, error reporting, and
+parsed-expression reuse without depending on Cargo after installation.
 
 ## Callback Resolver Shape
 
@@ -150,5 +181,5 @@ the core evaluator and reported through the FFI as evaluation errors.
 
 ## Next Planned FFI Step
 
-Add C packaging guidance and smoke coverage for CMake, pkg-config, and static
-library consumers.
+Keep the ABI regression fixture updated whenever the public C ABI intentionally
+changes.

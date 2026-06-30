@@ -16,6 +16,8 @@ cargo test --workspace --all-targets --all-features
 cargo test --release --workspace --all-targets --all-features
 cargo test --doc --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+./c-tests/run-smoke.sh
+./c-tests/run-packaging-smoke.sh
 ```
 
 The release test run matters because arithmetic overflow behavior must not
@@ -98,6 +100,7 @@ wait until the crate has meaningful concurrency.
 - `cargo test --doc --workspace --all-features`
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - `./c-tests/run-smoke.sh`
+- `./c-tests/run-packaging-smoke.sh`
 
 `.github/workflows/security.yml` runs supply-chain checks:
 
@@ -155,6 +158,14 @@ target.
   invocation;
 - C smoke tests must cover default options, valid options, resource-limit
   failure, and invalid options.
+- ABI regression smoke must freeze exported function names, status codes, error
+  codes, callback ABI, `ShyValue`, and `ShyEvalOptions`;
+- packaging smoke must verify pkg-config flags;
+- packaging smoke must build and run CMake consumers;
+- packaging smoke must build and run direct shared-library consumers;
+- packaging smoke must build and run direct static-library consumers;
+- standalone consumer examples must not require Cargo knowledge after the FFI
+  package is installed.
 
 ## Current Policy Notes
 
