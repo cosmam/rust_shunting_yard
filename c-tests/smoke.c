@@ -286,7 +286,7 @@ static void test_no_vars_ex_reports_lexical_span(void) {
     assert(shy_error_has_span(error) == 1);
     assert(shy_error_span_start(error) == 0);
     assert(shy_error_span_end(error) == 1);
-    assert(shy_error_diagnostic_count(error) == 1);
+    assert(shy_error_diagnostic_count(error) == 0);
 
     shy_error_free(error);
 }

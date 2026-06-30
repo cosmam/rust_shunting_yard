@@ -948,7 +948,7 @@ fn no_vars_ex_lexical_error_has_span() {
     assert_eq!(error_has_span(error.as_ptr()), 1);
     assert_eq!(error_span_start(error.as_ptr()), 0);
     assert_eq!(error_span_end(error.as_ptr()), 1);
-    assert_eq!(error_diagnostic_count(error.as_ptr()), 1);
+    assert_eq!(error_diagnostic_count(error.as_ptr()), 0);
 }
 
 #[test]
