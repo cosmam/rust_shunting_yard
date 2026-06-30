@@ -17,6 +17,7 @@ enum {
     SHY_STATUS_PANIC = 4,
     SHY_STATUS_RESOLVER_ERROR = 5,
     SHY_STATUS_INVALID_VALUE = 6,
+    SHY_STATUS_INVALID_OPTIONS = 7,
 };
 
 enum {
@@ -72,6 +73,7 @@ enum {
 
     SHY_ERROR_CODE_RESOLVER_ERROR = 500,
     SHY_ERROR_CODE_INVALID_VALUE_KIND = 600,
+    SHY_ERROR_CODE_INVALID_OPTIONS = 700,
 };
 
 enum {
@@ -90,6 +92,16 @@ typedef struct ShyValue {
     int64_t integer_value;
     double float_value;
 } ShyValue;
+
+typedef struct ShyEvalOptions {
+    uint32_t abi_size;
+    uint64_t max_input_bytes;
+    uint64_t max_tokens;
+    uint64_t max_ast_nodes;
+    uint64_t max_depth;
+    uint64_t max_function_args;
+    uint64_t max_parser_recoveries;
+} ShyEvalOptions;
 
 typedef struct ShyError ShyError;
 typedef struct ShyParsedExpression ShyParsedExpression;

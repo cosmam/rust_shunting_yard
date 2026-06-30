@@ -24,6 +24,8 @@ pub const SHY_STATUS_PANIC: ShyStatus = 4;
 pub const SHY_STATUS_RESOLVER_ERROR: ShyStatus = 5;
 /// The callback returned a value kind that is not recognized.
 pub const SHY_STATUS_INVALID_VALUE: ShyStatus = 6;
+/// The supplied evaluation options were invalid.
+pub const SHY_STATUS_INVALID_OPTIONS: ShyStatus = 7;
 
 /// Boolean value kind at the C ABI boundary.
 pub const SHY_VALUE_BOOL: i32 = 0;
@@ -109,6 +111,8 @@ pub const SHY_ERROR_CODE_INVALID_EXPRESSION: i32 = 412;
 pub const SHY_ERROR_CODE_RESOLVER_ERROR: i32 = 500;
 /// A callback returned an unknown ShyValue kind.
 pub const SHY_ERROR_CODE_INVALID_VALUE_KIND: i32 = 600;
+/// The supplied evaluation options were invalid.
+pub const SHY_ERROR_CODE_INVALID_OPTIONS: i32 = 700;
 
 /// No diagnostic is available for the requested index.
 pub const SHY_DIAGNOSTIC_KIND_NONE: i32 = 0;
@@ -149,6 +153,29 @@ pub struct ShyValue {
     pub integer_value: i64,
     /// Floating-point payload.
     pub float_value: f64,
+}
+
+/// Resource-limit options used by `_with_options` FFI entrypoints.
+///
+/// C callers should initialize this with [`shy_eval_options_default`], adjust
+/// fields as needed, and leave `abi_size` set to `sizeof(ShyEvalOptions)`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShyEvalOptions {
+    /// Size of this struct in bytes, used for ABI compatibility checks.
+    pub abi_size: u32,
+    /// Maximum UTF-8 input byte length.
+    pub max_input_bytes: u64,
+    /// Maximum number of lexer tokens.
+    pub max_tokens: u64,
+    /// Maximum AST node count.
+    pub max_ast_nodes: u64,
+    /// Maximum AST nesting depth.
+    pub max_depth: u64,
+    /// Maximum function argument count.
+    pub max_function_args: u64,
+    /// Maximum parser recoveries.
+    pub max_parser_recoveries: u64,
 }
 
 struct FfiDiagnostic {
@@ -210,7 +237,8 @@ fn status_from_code(code: ShyStatus) -> ShyStatus {
         | SHY_STATUS_EVALUATION_ERROR
         | SHY_STATUS_PANIC
         | SHY_STATUS_RESOLVER_ERROR
-        | SHY_STATUS_INVALID_VALUE => code,
+        | SHY_STATUS_INVALID_VALUE
+        | SHY_STATUS_INVALID_OPTIONS => code,
         _ => SHY_STATUS_RESOLVER_ERROR,
     }
 }
