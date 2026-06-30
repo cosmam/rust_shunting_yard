@@ -155,6 +155,12 @@ ShyStatus shy_parse_expression(
     ShyParsedExpression **out_expression
 );
 
+ShyStatus shy_parse_expression_with_options(
+    const char *expression,
+    const ShyEvalOptions *options,
+    ShyParsedExpression **out_expression
+);
+
 /*
  * Extended parse function with optional error object reporting.
  *
@@ -165,6 +171,20 @@ ShyStatus shy_parse_expression(
  */
 ShyStatus shy_parse_expression_ex(
     const char *expression,
+    ShyParsedExpression **out_expression,
+    ShyError **out_error
+);
+
+/*
+ * Extended parse function with caller-provided resource limits.
+ *
+ * Invalid options return SHY_STATUS_INVALID_OPTIONS. If out_error is not NULL,
+ * invalid options produce an input-stage ShyError with
+ * SHY_ERROR_CODE_INVALID_OPTIONS.
+ */
+ShyStatus shy_parse_expression_with_options_ex(
+    const char *expression,
+    const ShyEvalOptions *options,
     ShyParsedExpression **out_expression,
     ShyError **out_error
 );

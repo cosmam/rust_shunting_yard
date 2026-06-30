@@ -1307,6 +1307,101 @@ pub unsafe extern "C" fn shy_parse_expression(
     unsafe { shy_parse_expression_ex(expression, out_expression, ptr::null_mut()) }
 }
 
+/// Parse an expression into an owned parsed-expression handle using
+/// caller-provided resource limits.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `options` must be null or point to a valid
+/// [`ShyEvalOptions`]. `out_expression` must be null or point to valid,
+/// writable storage for one `ShyParsedExpression *`. `out_error` must be null
+/// or point to valid, writable storage for one `ShyError *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_parse_expression_with_options_ex(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    out_expression: *mut *mut ShyParsedExpression,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    ffi_boundary_with_error(out_error, || {
+        clear_optional_error(out_error);
+        clear_parsed_expression_output(out_expression);
+
+        if expression.is_null() || options.is_null() || out_expression.is_null() {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        }
+
+        // SAFETY:
+        // - options was checked for null above.
+        // - caller must provide a valid ShyEvalOptions pointer.
+        let options = unsafe { &*options };
+
+        let options = match eval_options_from_ffi(options) {
+            Ok(options) => options,
+            Err(status) => {
+                write_optional_error(out_error, invalid_options_error());
+                return status;
+            }
+        };
+
+        // SAFETY:
+        // - expression was checked for null above.
+        // - caller must provide a valid NUL-terminated C string.
+        // - CStr does not take ownership of the pointer.
+        let expression = unsafe { CStr::from_ptr(expression) };
+
+        let expression = match expression.to_str() {
+            Ok(expression) => expression,
+            Err(_) => {
+                write_optional_error(out_error, invalid_utf8_error());
+                return SHY_STATUS_INVALID_UTF8;
+            }
+        };
+
+        match parse_expression_with_core_options_ex_impl(expression, &options) {
+            Ok(parsed) => {
+                let parsed = allocate_parsed_expression(parsed);
+
+                // SAFETY:
+                // - out_expression was checked for null above.
+                // - caller must provide writable storage for one ShyParsedExpression pointer.
+                unsafe { out_expression.write(parsed) };
+                SHY_STATUS_OK
+            }
+            Err(failure) => {
+                let status = failure.status;
+                write_optional_error(out_error, failure.error);
+                status
+            }
+        }
+    })
+}
+
+/// Parse an expression into an owned parsed-expression handle using
+/// caller-provided resource limits.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `options` must be null or point to a valid
+/// [`ShyEvalOptions`]. `out_expression` must be null or point to valid,
+/// writable storage for one `ShyParsedExpression *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_parse_expression_with_options(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    out_expression: *mut *mut ShyParsedExpression,
+) -> ShyStatus {
+    // SAFETY:
+    // - forwards the caller-provided pointers to the extended entrypoint.
+    // - passes a null out_error pointer to preserve the status-only ABI.
+    unsafe {
+        shy_parse_expression_with_options_ex(expression, options, out_expression, ptr::null_mut())
+    }
+}
+
 /// Evaluate a parsed expression that does not require variable lookup.
 ///
 /// # Safety
