@@ -178,6 +178,20 @@ pub struct ShyEvalOptions {
     pub max_parser_recoveries: u64,
 }
 
+impl ShyEvalOptions {
+    fn from_core(options: shunting_yard::EvalOptions) -> Self {
+        Self {
+            abi_size: std::mem::size_of::<Self>() as u32,
+            max_input_bytes: options.max_input_bytes as u64,
+            max_tokens: options.max_tokens as u64,
+            max_ast_nodes: options.max_ast_nodes as u64,
+            max_depth: options.max_depth as u64,
+            max_function_args: options.max_function_args as u64,
+            max_parser_recoveries: options.max_parser_recoveries as u64,
+        }
+    }
+}
+
 struct FfiDiagnostic {
     kind: i32,
     span: Option<(i32, i32)>,
@@ -260,6 +274,40 @@ fn cstring_lossy_no_nul(message: impl Into<String>) -> CString {
 
 fn usize_to_i32_saturating(value: usize) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
+}
+
+fn usize_from_u64(value: u64) -> Option<usize> {
+    usize::try_from(value).ok()
+}
+
+fn eval_options_from_ffi(
+    options: &ShyEvalOptions,
+) -> Result<shunting_yard::EvalOptions, ShyStatus> {
+    if options.abi_size != std::mem::size_of::<ShyEvalOptions>() as u32 {
+        return Err(SHY_STATUS_INVALID_OPTIONS);
+    }
+
+    if options.max_input_bytes == 0
+        || options.max_tokens == 0
+        || options.max_ast_nodes == 0
+        || options.max_depth == 0
+        || options.max_function_args == 0
+        || options.max_parser_recoveries == 0
+    {
+        return Err(SHY_STATUS_INVALID_OPTIONS);
+    }
+
+    Ok(shunting_yard::EvalOptions {
+        max_input_bytes: usize_from_u64(options.max_input_bytes)
+            .ok_or(SHY_STATUS_INVALID_OPTIONS)?,
+        max_tokens: usize_from_u64(options.max_tokens).ok_or(SHY_STATUS_INVALID_OPTIONS)?,
+        max_ast_nodes: usize_from_u64(options.max_ast_nodes).ok_or(SHY_STATUS_INVALID_OPTIONS)?,
+        max_depth: usize_from_u64(options.max_depth).ok_or(SHY_STATUS_INVALID_OPTIONS)?,
+        max_function_args: usize_from_u64(options.max_function_args)
+            .ok_or(SHY_STATUS_INVALID_OPTIONS)?,
+        max_parser_recoveries: usize_from_u64(options.max_parser_recoveries)
+            .ok_or(SHY_STATUS_INVALID_OPTIONS)?,
+    })
 }
 
 struct ErrorParts {
@@ -369,6 +417,15 @@ fn invalid_utf8_error() -> ShyError {
         SHY_STATUS_INVALID_UTF8,
         SHY_ERROR_CODE_INVALID_UTF8,
         "expression was not valid UTF-8",
+    )
+    .into_ffi_error()
+}
+
+fn invalid_options_error() -> ShyError {
+    input_error_parts(
+        SHY_STATUS_INVALID_OPTIONS,
+        SHY_ERROR_CODE_INVALID_OPTIONS,
+        "invalid evaluation options",
     )
     .into_ffi_error()
 }
@@ -624,6 +681,16 @@ fn failure_from_parts(parts: ErrorParts) -> FfiFailure {
     }
 }
 
+fn ffi_boundary<F>(f: F) -> ShyStatus
+where
+    F: FnOnce() -> ShyStatus,
+{
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(status) => status,
+        Err(_) => SHY_STATUS_PANIC,
+    }
+}
+
 fn ffi_boundary_with_error<F>(out_error: *mut *mut ShyError, f: F) -> ShyStatus
 where
     F: FnOnce() -> ShyStatus,
@@ -696,6 +763,30 @@ pub unsafe extern "C" fn shy_error_free(error: *mut ShyError) {
     // - error must have been returned by this crate through an out_error parameter.
     // - Box::from_raw takes ownership and drops the allocation exactly once.
     unsafe { drop(Box::from_raw(error)) };
+}
+
+/// Initialize evaluation options with the core crate defaults.
+///
+/// # Safety
+///
+/// `out_options` must be null or point to valid, writable storage for one
+/// [`ShyEvalOptions`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_eval_options_default(out_options: *mut ShyEvalOptions) -> ShyStatus {
+    ffi_boundary(|| {
+        if out_options.is_null() {
+            return SHY_STATUS_NULL_POINTER;
+        }
+
+        let options = ShyEvalOptions::from_core(shunting_yard::EvalOptions::default());
+
+        // SAFETY:
+        // - out_options was checked for null above.
+        // - caller must provide writable storage for one ShyEvalOptions.
+        unsafe { out_options.write(options) };
+
+        SHY_STATUS_OK
+    })
 }
 
 /// Return the status associated with an error object.
@@ -1033,8 +1124,11 @@ impl TryFrom<ShyValue> for shunting_yard::Value {
     }
 }
 
-fn parse_expression_ex_impl(expression: &str) -> Result<ShyParsedExpression, FfiFailure> {
-    match shunting_yard::parse_detailed(expression) {
+fn parse_expression_with_core_options_ex_impl(
+    expression: &str,
+    options: &shunting_yard::EvalOptions,
+) -> Result<ShyParsedExpression, FfiFailure> {
+    match shunting_yard::parse_with_options_detailed(expression, options) {
         Ok(parsed) => Ok(ShyParsedExpression {
             parsed: parsed.into_owned(),
         }),
@@ -1042,13 +1136,26 @@ fn parse_expression_ex_impl(expression: &str) -> Result<ShyParsedExpression, Ffi
     }
 }
 
-fn evaluate_no_vars_ex_impl(expression: &str) -> Result<ShyValue, FfiFailure> {
+fn parse_expression_ex_impl(expression: &str) -> Result<ShyParsedExpression, FfiFailure> {
+    parse_expression_with_core_options_ex_impl(expression, &shunting_yard::EvalOptions::default())
+}
+
+fn evaluate_no_vars_with_core_options_ex_impl(
+    expression: &str,
+    options: &shunting_yard::EvalOptions,
+) -> Result<ShyValue, FfiFailure> {
     let variables = HashMap::new();
 
-    match shunting_yard::evaluate_detailed(expression, &variables) {
+    match shunting_yard::evaluate_with_options_and_resolver_detailed(
+        expression, &variables, options,
+    ) {
         Ok(value) => Ok(ShyValue::from_value(value)),
         Err(error) => Err(failure_from_parts(error_parts_from_core_error(error))),
     }
+}
+
+fn evaluate_no_vars_ex_impl(expression: &str) -> Result<ShyValue, FfiFailure> {
+    evaluate_no_vars_with_core_options_ex_impl(expression, &shunting_yard::EvalOptions::default())
 }
 
 fn evaluate_parsed_no_vars_ex_impl(
@@ -1062,8 +1169,9 @@ fn evaluate_parsed_no_vars_ex_impl(
     }
 }
 
-fn evaluate_with_callback_ex_impl(
+fn evaluate_with_callback_with_core_options_ex_impl(
     expression: &str,
+    options: &shunting_yard::EvalOptions,
     callback: ShyVariableResolverCallback,
     user_data: *mut c_void,
 ) -> Result<ShyValue, FfiFailure> {
@@ -1073,7 +1181,11 @@ fn evaluate_with_callback_ex_impl(
         last_error_parts: None,
     };
 
-    match shunting_yard::evaluate_with_resolver_detailed(expression, &mut resolver) {
+    match shunting_yard::evaluate_with_options_and_resolver_detailed(
+        expression,
+        &mut resolver,
+        options,
+    ) {
         Ok(value) => Ok(ShyValue::from_value(value)),
         Err(error) => {
             let parts = match resolver.last_error_parts {
@@ -1083,6 +1195,19 @@ fn evaluate_with_callback_ex_impl(
             Err(failure_from_parts(parts))
         }
     }
+}
+
+fn evaluate_with_callback_ex_impl(
+    expression: &str,
+    callback: ShyVariableResolverCallback,
+    user_data: *mut c_void,
+) -> Result<ShyValue, FfiFailure> {
+    evaluate_with_callback_with_core_options_ex_impl(
+        expression,
+        &shunting_yard::EvalOptions::default(),
+        callback,
+        user_data,
+    )
 }
 
 fn evaluate_parsed_with_callback_ex_impl(
@@ -1397,6 +1522,94 @@ pub unsafe extern "C" fn shy_evaluate_no_vars(
     // - forwards the caller-provided pointers to the extended entrypoint.
     // - passes a null out_error pointer to preserve the status-only ABI.
     unsafe { shy_evaluate_no_vars_ex(expression, out_value, ptr::null_mut()) }
+}
+
+/// Evaluate an expression without variables using caller-provided resource limits.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `options` must be null or point to a valid
+/// [`ShyEvalOptions`]. `out_value` must be null or point to valid, writable
+/// storage for one [`ShyValue`]. `out_error` must be null or point to valid,
+/// writable storage for one `ShyError *`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_no_vars_with_options_ex(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    out_value: *mut ShyValue,
+    out_error: *mut *mut ShyError,
+) -> ShyStatus {
+    ffi_boundary_with_error(out_error, || {
+        clear_optional_error(out_error);
+
+        if expression.is_null() || options.is_null() || out_value.is_null() {
+            write_optional_error(out_error, null_pointer_error());
+            return SHY_STATUS_NULL_POINTER;
+        }
+
+        // SAFETY:
+        // - options was checked for null above.
+        // - caller must provide a valid ShyEvalOptions pointer.
+        let options = unsafe { &*options };
+
+        let options = match eval_options_from_ffi(options) {
+            Ok(options) => options,
+            Err(status) => {
+                write_optional_error(out_error, invalid_options_error());
+                return status;
+            }
+        };
+
+        // SAFETY:
+        // - expression was checked for null above.
+        // - caller must provide a valid NUL-terminated C string.
+        // - CStr does not take ownership of the pointer.
+        let expression = unsafe { CStr::from_ptr(expression) };
+
+        let expression = match expression.to_str() {
+            Ok(expression) => expression,
+            Err(_) => {
+                write_optional_error(out_error, invalid_utf8_error());
+                return SHY_STATUS_INVALID_UTF8;
+            }
+        };
+
+        match evaluate_no_vars_with_core_options_ex_impl(expression, &options) {
+            Ok(value) => {
+                // SAFETY:
+                // - out_value was checked for null above.
+                // - caller must provide valid writable storage for ShyValue.
+                unsafe { out_value.write(value) };
+                SHY_STATUS_OK
+            }
+            Err(failure) => {
+                let status = failure.status;
+                write_optional_error(out_error, failure.error);
+                status
+            }
+        }
+    })
+}
+
+/// Evaluate an expression without variables using caller-provided resource limits.
+///
+/// # Safety
+///
+/// `expression` must be null or point to a valid NUL-terminated C string for
+/// the duration of the call. `options` must be null or point to a valid
+/// [`ShyEvalOptions`]. `out_value` must be null or point to valid, writable
+/// storage for one [`ShyValue`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shy_evaluate_no_vars_with_options(
+    expression: *const c_char,
+    options: *const ShyEvalOptions,
+    out_value: *mut ShyValue,
+) -> ShyStatus {
+    // SAFETY:
+    // - forwards the caller-provided pointers to the extended entrypoint.
+    // - passes a null out_error pointer to preserve the status-only ABI.
+    unsafe { shy_evaluate_no_vars_with_options_ex(expression, options, out_value, ptr::null_mut()) }
 }
 
 /// Evaluate an expression using a C callback for variable lookup.

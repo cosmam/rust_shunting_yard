@@ -103,6 +103,16 @@ typedef struct ShyEvalOptions {
     uint64_t max_parser_recoveries;
 } ShyEvalOptions;
 
+/*
+ * Initialize ShyEvalOptions with the current default resource limits.
+ *
+ * Callers should initialize options with this function, adjust nonzero limits
+ * as needed, and leave abi_size set to sizeof(ShyEvalOptions). With-options
+ * entrypoints reject invalid abi_size values, zero limits, and limits that
+ * cannot fit in Rust usize.
+ */
+ShyStatus shy_eval_options_default(ShyEvalOptions *out_options);
+
 typedef struct ShyError ShyError;
 typedef struct ShyParsedExpression ShyParsedExpression;
 
@@ -171,6 +181,12 @@ ShyStatus shy_evaluate_no_vars(
     ShyValue *out_value
 );
 
+ShyStatus shy_evaluate_no_vars_with_options(
+    const char *expression,
+    const ShyEvalOptions *options,
+    ShyValue *out_value
+);
+
 /*
  * Extended no-variable evaluation.
  *
@@ -181,6 +197,20 @@ ShyStatus shy_evaluate_no_vars(
  */
 ShyStatus shy_evaluate_no_vars_ex(
     const char *expression,
+    ShyValue *out_value,
+    ShyError **out_error
+);
+
+/*
+ * Extended no-variable evaluation with caller-provided resource limits.
+ *
+ * Invalid options return SHY_STATUS_INVALID_OPTIONS. If out_error is not NULL,
+ * invalid options produce an input-stage ShyError with
+ * SHY_ERROR_CODE_INVALID_OPTIONS.
+ */
+ShyStatus shy_evaluate_no_vars_with_options_ex(
+    const char *expression,
+    const ShyEvalOptions *options,
     ShyValue *out_value,
     ShyError **out_error
 );
