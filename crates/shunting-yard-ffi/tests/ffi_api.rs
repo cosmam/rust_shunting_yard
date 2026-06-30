@@ -2,22 +2,26 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 
 use shunting_yard_ffi::{
-    SHY_ERROR_CODE_DIVISION_BY_ZERO, SHY_ERROR_CODE_INPUT_TOO_LARGE, SHY_ERROR_CODE_INVALID_UTF8,
-    SHY_ERROR_CODE_INVALID_VALUE_KIND, SHY_ERROR_CODE_LEXICAL_ERROR,
-    SHY_ERROR_CODE_NON_FINITE_FLOAT, SHY_ERROR_CODE_NULL_POINTER, SHY_ERROR_CODE_PARSE_RECOVERY,
-    SHY_ERROR_CODE_RESOLVER_ERROR, SHY_ERROR_CODE_SUBNORMAL_FLOAT, SHY_ERROR_STAGE_EVALUATION,
-    SHY_ERROR_STAGE_INPUT, SHY_ERROR_STAGE_INVALID_VALUE, SHY_ERROR_STAGE_LEXICAL,
-    SHY_ERROR_STAGE_NONE, SHY_ERROR_STAGE_PARSE, SHY_ERROR_STAGE_RESOLVER,
+    SHY_DIAGNOSTIC_KIND_NONE, SHY_DIAGNOSTIC_KIND_RECOVERY, SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_EOF,
+    SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_TOKEN, SHY_ERROR_CODE_DIVISION_BY_ZERO,
+    SHY_ERROR_CODE_INPUT_TOO_LARGE, SHY_ERROR_CODE_INVALID_UTF8, SHY_ERROR_CODE_INVALID_VALUE_KIND,
+    SHY_ERROR_CODE_LEXICAL_ERROR, SHY_ERROR_CODE_NON_FINITE_FLOAT, SHY_ERROR_CODE_NULL_POINTER,
+    SHY_ERROR_CODE_PARSE_RECOVERY, SHY_ERROR_CODE_RESOLVER_ERROR, SHY_ERROR_CODE_SUBNORMAL_FLOAT,
+    SHY_ERROR_STAGE_EVALUATION, SHY_ERROR_STAGE_INPUT, SHY_ERROR_STAGE_INVALID_VALUE,
+    SHY_ERROR_STAGE_LEXICAL, SHY_ERROR_STAGE_NONE, SHY_ERROR_STAGE_PARSE, SHY_ERROR_STAGE_RESOLVER,
     SHY_ERROR_STAGE_RESOURCE_LIMIT, SHY_STATUS_EVALUATION_ERROR, SHY_STATUS_INVALID_UTF8,
     SHY_STATUS_INVALID_VALUE, SHY_STATUS_NULL_POINTER, SHY_STATUS_OK, SHY_STATUS_RESOLVER_ERROR,
     SHY_VALUE_BOOL, SHY_VALUE_FLOAT, SHY_VALUE_INTEGER, ShyError, ShyParsedExpression, ShyStatus,
     ShyValue, ShyValueKind, ShyVariableResolver, shy_error_code, shy_error_diagnostic_count,
-    shy_error_free, shy_error_has_span, shy_error_message, shy_error_span_end,
-    shy_error_span_start, shy_error_stage, shy_error_status, shy_evaluate_no_vars,
-    shy_evaluate_no_vars_ex, shy_evaluate_parsed_no_vars, shy_evaluate_parsed_no_vars_ex,
-    shy_evaluate_parsed_with_callback, shy_evaluate_parsed_with_callback_ex,
-    shy_evaluate_with_callback, shy_evaluate_with_callback_ex, shy_parse_expression,
-    shy_parse_expression_ex, shy_parsed_expression_free,
+    shy_error_diagnostic_expected_count, shy_error_diagnostic_expected_token,
+    shy_error_diagnostic_has_span, shy_error_diagnostic_kind, shy_error_diagnostic_span_end,
+    shy_error_diagnostic_span_start, shy_error_free, shy_error_has_span, shy_error_message,
+    shy_error_span_end, shy_error_span_start, shy_error_stage, shy_error_status,
+    shy_evaluate_no_vars, shy_evaluate_no_vars_ex, shy_evaluate_parsed_no_vars,
+    shy_evaluate_parsed_no_vars_ex, shy_evaluate_parsed_with_callback,
+    shy_evaluate_parsed_with_callback_ex, shy_evaluate_with_callback,
+    shy_evaluate_with_callback_ex, shy_parse_expression, shy_parse_expression_ex,
+    shy_parsed_expression_free,
 };
 
 fn default_test_value() -> ShyValue {
@@ -284,6 +288,56 @@ fn error_diagnostic_count(error: *const ShyError) -> i32 {
     // SAFETY:
     // - Tests pass either null or a live ShyError pointer returned by this crate.
     unsafe { shy_error_diagnostic_count(error) }
+}
+
+fn diagnostic_kind(error: *const ShyError, index: i32) -> i32 {
+    // SAFETY:
+    // - Tests pass either null or a live ShyError pointer returned by this crate.
+    unsafe { shy_error_diagnostic_kind(error, index) }
+}
+
+fn diagnostic_has_span(error: *const ShyError, index: i32) -> i32 {
+    // SAFETY:
+    // - Tests pass either null or a live ShyError pointer returned by this crate.
+    unsafe { shy_error_diagnostic_has_span(error, index) }
+}
+
+fn diagnostic_span_start(error: *const ShyError, index: i32) -> i32 {
+    // SAFETY:
+    // - Tests pass either null or a live ShyError pointer returned by this crate.
+    unsafe { shy_error_diagnostic_span_start(error, index) }
+}
+
+fn diagnostic_span_end(error: *const ShyError, index: i32) -> i32 {
+    // SAFETY:
+    // - Tests pass either null or a live ShyError pointer returned by this crate.
+    unsafe { shy_error_diagnostic_span_end(error, index) }
+}
+
+fn diagnostic_expected_count(error: *const ShyError, index: i32) -> i32 {
+    // SAFETY:
+    // - Tests pass either null or a live ShyError pointer returned by this crate.
+    unsafe { shy_error_diagnostic_expected_count(error, index) }
+}
+
+fn diagnostic_expected_token(
+    error: *const ShyError,
+    diagnostic_index: i32,
+    expected_index: i32,
+) -> Option<String> {
+    // SAFETY:
+    // - Tests pass either null or a live ShyError pointer returned by this crate.
+    let token =
+        unsafe { shy_error_diagnostic_expected_token(error, diagnostic_index, expected_index) };
+    if token.is_null() {
+        return None;
+    }
+
+    // SAFETY:
+    // - shy_error_diagnostic_expected_token returned a non-null
+    //   NUL-terminated pointer borrowed from a live ShyError.
+    let token = unsafe { CStr::from_ptr(token) };
+    Some(token.to_string_lossy().into_owned())
 }
 
 unsafe extern "C" fn resolve_x_to_integer(
@@ -881,6 +935,123 @@ fn error_accessors_handle_null() {
     assert_eq!(error_span_start(ptr::null()), -1);
     assert_eq!(error_span_end(ptr::null()), -1);
     assert_eq!(error_diagnostic_count(ptr::null()), 0);
+}
+
+#[test]
+fn diagnostic_accessors_handle_null_error() {
+    assert_eq!(diagnostic_kind(ptr::null(), 0), SHY_DIAGNOSTIC_KIND_NONE);
+    assert_eq!(diagnostic_has_span(ptr::null(), 0), 0);
+    assert_eq!(diagnostic_span_start(ptr::null(), 0), -1);
+    assert_eq!(diagnostic_span_end(ptr::null(), 0), -1);
+    assert_eq!(diagnostic_expected_count(ptr::null(), 0), 0);
+    assert_eq!(diagnostic_expected_token(ptr::null(), 0, 0), None);
+}
+
+#[test]
+fn diagnostic_accessors_handle_negative_indexes() {
+    let expression = c_string("1 +");
+    let mut parsed = ptr::null_mut();
+    let mut error = ptr::null_mut();
+
+    let status = parse_expression_ex(expression.as_ptr(), &mut parsed, &mut error);
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert!(parsed.is_null());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(
+        diagnostic_kind(error.as_ptr(), -1),
+        SHY_DIAGNOSTIC_KIND_NONE
+    );
+    assert_eq!(diagnostic_has_span(error.as_ptr(), -1), 0);
+    assert_eq!(diagnostic_span_start(error.as_ptr(), -1), -1);
+    assert_eq!(diagnostic_span_end(error.as_ptr(), -1), -1);
+    assert_eq!(diagnostic_expected_count(error.as_ptr(), -1), 0);
+    assert_eq!(diagnostic_expected_token(error.as_ptr(), 0, -1), None);
+}
+
+#[test]
+fn diagnostic_accessors_handle_out_of_range_indexes() {
+    let expression = c_string("1 +");
+    let mut parsed = ptr::null_mut();
+    let mut error = ptr::null_mut();
+
+    let status = parse_expression_ex(expression.as_ptr(), &mut parsed, &mut error);
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert!(parsed.is_null());
+
+    let error = ErrorHandle::new(error);
+    let count = error_diagnostic_count(error.as_ptr());
+    assert!(count >= 1);
+
+    assert_eq!(
+        diagnostic_kind(error.as_ptr(), count),
+        SHY_DIAGNOSTIC_KIND_NONE
+    );
+    assert_eq!(diagnostic_has_span(error.as_ptr(), count), 0);
+    assert_eq!(diagnostic_span_start(error.as_ptr(), count), -1);
+    assert_eq!(diagnostic_span_end(error.as_ptr(), count), -1);
+    assert_eq!(diagnostic_expected_count(error.as_ptr(), count), 0);
+    assert_eq!(
+        diagnostic_expected_token(
+            error.as_ptr(),
+            0,
+            diagnostic_expected_count(error.as_ptr(), 0)
+        ),
+        None
+    );
+}
+
+#[test]
+fn parse_error_exposes_indexed_diagnostic_kind_span_and_expected_tokens() {
+    let expression = c_string("1 +");
+    let mut parsed = ptr::null_mut();
+    let mut error = ptr::null_mut();
+
+    let status = parse_expression_ex(expression.as_ptr(), &mut parsed, &mut error);
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert!(parsed.is_null());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_PARSE);
+    assert!(error_diagnostic_count(error.as_ptr()) >= 1);
+
+    let kind = diagnostic_kind(error.as_ptr(), 0);
+    assert!(
+        kind == SHY_DIAGNOSTIC_KIND_RECOVERY
+            || kind == SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_EOF
+            || kind == SHY_DIAGNOSTIC_KIND_UNRECOGNIZED_TOKEN
+    );
+    assert_eq!(diagnostic_has_span(error.as_ptr(), 0), 1);
+    assert!(diagnostic_span_start(error.as_ptr(), 0) >= 0);
+    assert!(diagnostic_span_end(error.as_ptr(), 0) >= diagnostic_span_start(error.as_ptr(), 0));
+
+    let expected_count = diagnostic_expected_count(error.as_ptr(), 0);
+    assert!(expected_count >= 1);
+
+    let token = diagnostic_expected_token(error.as_ptr(), 0, 0);
+    assert!(token.as_ref().is_some_and(|token| !token.is_empty()));
+}
+
+#[test]
+fn evaluation_errors_have_no_indexed_diagnostics() {
+    let expression = c_string("1 / 0");
+    let mut out = default_test_value();
+    let mut error = ptr::null_mut();
+
+    let status = evaluate_ex(expression.as_ptr(), &mut out, &mut error);
+
+    assert_eq!(status, SHY_STATUS_EVALUATION_ERROR);
+    assert_eq!(out, default_test_value());
+
+    let error = ErrorHandle::new(error);
+    assert_eq!(error_stage(error.as_ptr()), SHY_ERROR_STAGE_EVALUATION);
+    assert_eq!(error_diagnostic_count(error.as_ptr()), 0);
+    assert_eq!(diagnostic_kind(error.as_ptr(), 0), SHY_DIAGNOSTIC_KIND_NONE);
+    assert_eq!(diagnostic_expected_count(error.as_ptr(), 0), 0);
+    assert_eq!(diagnostic_expected_token(error.as_ptr(), 0, 0), None);
 }
 
 #[test]
