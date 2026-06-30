@@ -23,6 +23,41 @@ _Static_assert(
     "float_value offset mismatch"
 );
 
+_Static_assert(
+    offsetof(ShyEvalOptions, abi_size) == 0,
+    "ShyEvalOptions.abi_size offset mismatch"
+);
+_Static_assert(
+    offsetof(ShyEvalOptions, max_input_bytes) >
+        offsetof(ShyEvalOptions, abi_size),
+    "ShyEvalOptions.max_input_bytes offset mismatch"
+);
+_Static_assert(
+    offsetof(ShyEvalOptions, max_tokens) >
+        offsetof(ShyEvalOptions, max_input_bytes),
+    "ShyEvalOptions.max_tokens offset mismatch"
+);
+_Static_assert(
+    offsetof(ShyEvalOptions, max_ast_nodes) >
+        offsetof(ShyEvalOptions, max_tokens),
+    "ShyEvalOptions.max_ast_nodes offset mismatch"
+);
+_Static_assert(
+    offsetof(ShyEvalOptions, max_depth) >
+        offsetof(ShyEvalOptions, max_ast_nodes),
+    "ShyEvalOptions.max_depth offset mismatch"
+);
+_Static_assert(
+    offsetof(ShyEvalOptions, max_function_args) >
+        offsetof(ShyEvalOptions, max_depth),
+    "ShyEvalOptions.max_function_args offset mismatch"
+);
+_Static_assert(
+    offsetof(ShyEvalOptions, max_parser_recoveries) >
+        offsetof(ShyEvalOptions, max_function_args),
+    "ShyEvalOptions.max_parser_recoveries offset mismatch"
+);
+
 typedef struct TestContext {
     int64_t value;
     int calls;
@@ -133,11 +168,111 @@ static void test_invalid_utf8(void) {
     assert(status == SHY_STATUS_INVALID_UTF8);
 }
 
+static void test_eval_options_default(void) {
+    ShyEvalOptions options = {0};
+    ShyStatus status = shy_eval_options_default(&options);
+
+    assert(status == SHY_STATUS_OK);
+    assert(options.abi_size == sizeof(ShyEvalOptions));
+    assert(options.max_input_bytes == 16 * 1024);
+    assert(options.max_tokens == 4096);
+    assert(options.max_ast_nodes == 4096);
+    assert(options.max_depth == 256);
+    assert(options.max_function_args == 256);
+    assert(options.max_parser_recoveries == 64);
+}
+
+static void test_no_vars_with_options_success(void) {
+    ShyEvalOptions options = {0};
+    ShyValue value = {0};
+    ShyStatus status = shy_eval_options_default(&options);
+
+    assert(status == SHY_STATUS_OK);
+
+    status = shy_evaluate_no_vars_with_options("1 + 2", &options, &value);
+
+    assert(status == SHY_STATUS_OK);
+    assert(value.kind == SHY_VALUE_INTEGER);
+    assert(value.integer_value == 3);
+}
+
+static void test_no_vars_with_options_token_limit(void) {
+    ShyEvalOptions options = {0};
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyError *error = NULL;
+    ShyStatus status = shy_eval_options_default(&options);
+
+    assert(status == SHY_STATUS_OK);
+
+    options.max_tokens = 1;
+    status = shy_evaluate_no_vars_with_options_ex(
+        "1 + 2",
+        &options,
+        &value,
+        &error
+    );
+
+    assert(status == SHY_STATUS_EVALUATION_ERROR);
+    assert(value.integer_value == -1);
+    assert(error != NULL);
+    assert(shy_error_stage(error) == SHY_ERROR_STAGE_RESOURCE_LIMIT);
+    assert(shy_error_code(error) == SHY_ERROR_CODE_TOO_MANY_TOKENS);
+
+    shy_error_free(error);
+}
+
+static void test_with_options_rejects_invalid_options(void) {
+    ShyEvalOptions options = {0};
+    ShyValue value = {.kind = SHY_VALUE_INTEGER, .integer_value = -1};
+    ShyError *error = NULL;
+    ShyStatus status = shy_eval_options_default(&options);
+
+    assert(status == SHY_STATUS_OK);
+
+    options.abi_size = 0;
+    status = shy_evaluate_no_vars_with_options_ex(
+        "1 + 2",
+        &options,
+        &value,
+        &error
+    );
+
+    assert(status == SHY_STATUS_INVALID_OPTIONS);
+    assert(value.integer_value == -1);
+    assert(error != NULL);
+    assert(shy_error_stage(error) == SHY_ERROR_STAGE_INPUT);
+    assert(shy_error_code(error) == SHY_ERROR_CODE_INVALID_OPTIONS);
+
+    shy_error_free(error);
+}
+
 static void test_callback_integer_success(void) {
     TestContext context = {.value = 40, .calls = 0};
     ShyValue value = {0};
     ShyStatus status = shy_evaluate_with_callback(
         "x + 2",
+        resolve_from_context,
+        &context,
+        &value
+    );
+
+    assert(status == SHY_STATUS_OK);
+    assert(value.kind == SHY_VALUE_INTEGER);
+    assert(value.integer_value == 42);
+    assert(context.calls == 1);
+}
+
+static void test_callback_with_options_success(void) {
+    ShyEvalOptions options = {0};
+    TestContext context = {.value = 40, .calls = 0};
+    ShyValue value = {0};
+    ShyStatus status = shy_eval_options_default(&options);
+
+    assert(status == SHY_STATUS_OK);
+
+    status = shy_evaluate_with_callback_with_options(
+        "x + 2",
+        &options,
         resolve_from_context,
         &context,
         &value
@@ -358,6 +493,21 @@ static void test_parse_and_evaluate_no_vars(void) {
     shy_parsed_expression_free(parsed);
 }
 
+static void test_parse_with_options_success(void) {
+    ShyEvalOptions options = {0};
+    ShyParsedExpression *parsed = NULL;
+    ShyStatus status = shy_eval_options_default(&options);
+
+    assert(status == SHY_STATUS_OK);
+
+    status = shy_parse_expression_with_options("1 + 2", &options, &parsed);
+
+    assert(status == SHY_STATUS_OK);
+    assert(parsed != NULL);
+
+    shy_parsed_expression_free(parsed);
+}
+
 static void test_parse_once_evaluate_many(void) {
     ShyParsedExpression *parsed = NULL;
     ShyStatus status = shy_parse_expression("1 + 2", &parsed);
@@ -546,7 +696,12 @@ int main(void) {
     test_null_output();
     test_evaluation_error();
     test_invalid_utf8();
+    test_eval_options_default();
+    test_no_vars_with_options_success();
+    test_no_vars_with_options_token_limit();
+    test_with_options_rejects_invalid_options();
     test_callback_integer_success();
+    test_callback_with_options_success();
     test_callback_repeated_lookup();
     test_callback_null_resolver();
     test_callback_resolver_error();
@@ -561,6 +716,7 @@ int main(void) {
     test_callback_ex_reports_resolver_error();
     test_callback_ex_reports_invalid_value_kind();
     test_parse_and_evaluate_no_vars();
+    test_parse_with_options_success();
     test_parse_once_evaluate_many();
     test_parsed_callback_uses_runtime_user_data();
     test_parsed_ex_evaluation_success_clears_error();
