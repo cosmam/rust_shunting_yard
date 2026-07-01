@@ -210,6 +210,66 @@ The FFI crate also exposes opaque parsed-expression handles. C callers can
 parse once, evaluate the handle repeatedly with no variables or callback-backed
 variables, and release the handle with `shy_parsed_expression_free`.
 
+### FFI Packaging
+
+The FFI package installer creates a native-consumer layout:
+
+```text
+include/shunting_yard_ffi.h
+lib/libshunting_yard_ffi.a
+lib/libshunting_yard_ffi.so
+lib/pkgconfig/shunting_yard_ffi.pc
+lib/cmake/ShuntingYardFFI/ShuntingYardFFIConfig.cmake
+lib/cmake/ShuntingYardFFI/ShuntingYardFFITargets.cmake
+```
+
+Build and install the debug package with:
+
+```bash
+c-tests/install-ffi-package.sh target/ffi-package/install
+```
+
+For optimized artifacts:
+
+```bash
+PROFILE=release c-tests/install-ffi-package.sh target/ffi-package/install
+```
+
+pkg-config consumers can use:
+
+```bash
+PKG_CONFIG_PATH="$(pwd)/target/ffi-package/install/lib/pkgconfig" \
+  pkg-config --cflags --libs shunting_yard_ffi
+```
+
+CMake consumers can use:
+
+```cmake
+find_package(ShuntingYardFFI REQUIRED)
+target_link_libraries(app PRIVATE ShuntingYardFFI::ShuntingYardFFI)
+```
+
+The package also provides `ShuntingYardFFI::ShuntingYardFFIShared` and
+`ShuntingYardFFI::ShuntingYardFFIStatic` imported targets when the matching
+library artifact is installed.
+
+On Linux, shared-library consumers need the installed `lib/` directory on the
+runtime loader path, for example through `LD_LIBRARY_PATH`, an rpath, or a
+system library path. Static-library consumers link `libshunting_yard_ffi.a`;
+the provided CMake target adds the Linux system libraries needed by Rust's
+static runtime. On macOS, use the installed `.dylib` and configure the runtime
+search path with `DYLD_LIBRARY_PATH`, an rpath, or the app bundle layout. On
+Windows, ship the DLL next to the executable or on `PATH`, and link through the
+import library produced by the Rust build.
+
+The C ABI version follows the crate workspace version. Function names, status
+codes, error codes, callback signatures, `ShyValue`, and `ShyEvalOptions` are
+covered by ABI smoke tests to catch accidental changes.
+
+See [examples/c-consumer](examples/c-consumer) for a standalone CMake consumer
+that exercises parsing, callback evaluation, resource limits, error reporting,
+and parsed-expression reuse.
+
 ## Verification
 
 The main local verification pass is:
@@ -221,6 +281,7 @@ cargo test --release --workspace --all-targets --all-features
 cargo test --doc --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ./c-tests/run-smoke.sh
+./c-tests/run-packaging-smoke.sh
 ```
 
 See [guidelines/verification_and_ci_plan.md](guidelines/verification_and_ci_plan.md)

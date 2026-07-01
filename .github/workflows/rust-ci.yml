@@ -63,3 +63,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: bash ./c-tests/run-smoke.sh
+
+  ffi-packaging-smoke:
+    name: FFI packaging smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update
+      - run: sudo apt-get install -y cmake pkg-config
+      - run: bash ./c-tests/run-packaging-smoke.sh
